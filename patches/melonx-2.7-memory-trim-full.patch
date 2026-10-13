@@ -1,0 +1,501 @@
+
+--- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-11 00:04:05.000000000 -0500
++++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 00:22:41.059833172 -0500
+@@ -342,12 +342,33 @@
+         private const ulong CriticalHeadroomBytes = 256 * TrimMiB;
+         private const long MinimumTrimIntervalMs = 2000;
+ 
++        // Headroom below which the GPU thread asks for a trim on its own, without waiting for the host to report pressure.
++        private const ulong LowHeadroomBytes = 450 * TrimMiB;
++        private const long HeadroomPollIntervalMs = 500;
++
++        private const int TrimRequestNone = 0;
++        private const int TrimRequestWarning = 1;
++        private const int TrimRequestCritical = 2;
++
++        // How often the memory state is logged, normally and while headroom is below the comfortable level.
++        private const long TelemetryIntervalMs = 10000;
++        private const long TelemetryIntervalLowHeadroomMs = 2000;
++
+         private long _lastTrimTimestamp;
++        private long _nextHeadroomPollTimestamp;
++        private long _nextTelemetryTimestamp;
++        private ulong _lastHeadroom;
++        private int _telemetrySample;
++        private int _pendingTrimRequest;
+ 
+         /// <summary>
+-        /// Evicts GPU resource caches in response to host memory pressure, in proportion to what
+-        /// they are actually holding and only when this process looks like the one under pressure.
++        /// Requests that GPU resource caches be evicted in response to host memory pressure.
+         /// </summary>
++        /// <remarks>
++        /// The caches are only safe to touch from the GPU thread (the texture cache is an unsynchronized LRU list, and
++        /// eviction flushes and releases host textures). When called from any other thread, such as a host memory warning
++        /// callback, the request is stored and carried out by the GPU thread at the start of its next frame.
++        /// </remarks>
+         /// <param name="level">How much the host wants back</param>
+         public void TrimCaches(MemoryPressureLevel level)
+         {
+@@ -356,6 +377,135 @@
+                 return;
+             }
+ 
++            if (IsGpuThread())
++            {
++                ApplyTrim(level);
++            }
++            else
++            {
++                RequestTrim(level == MemoryPressureLevel.Critical ? TrimRequestCritical : TrimRequestWarning);
++            }
++        }
++
++        /// <summary>
++        /// Stores a trim request, keeping the most severe one if several arrive before the GPU thread handles them.
++        /// </summary>
++        /// <param name="request">Request severity</param>
++        private void RequestTrim(int request)
++        {
++            int current;
++
++            do
++            {
++                current = Volatile.Read(ref _pendingTrimRequest);
++
++                if (current >= request)
++                {
++                    return;
++                }
++            }
++            while (Interlocked.CompareExchange(ref _pendingTrimRequest, request, current) != current);
++        }
++
++        /// <summary>
++        /// Handles memory pressure on the GPU thread, once per frame: samples the process headroom at a low rate and
++        /// requests a trim when it is low, logs memory telemetry, then carries out any pending trim request.
++        /// </summary>
++        public void ProcessMemoryPressure()
++        {
++            if (!GraphicsConfig.EnableHostMemoryBudgetTracking)
++            {
++                return;
++            }
++
++            long now = Environment.TickCount64;
++
++            if (now >= _nextHeadroomPollTimestamp)
++            {
++                _nextHeadroomPollTimestamp = now + HeadroomPollIntervalMs;
++
++                ulong headroom = HostMemoryBudget.AvailableBytes;
++
++                _lastHeadroom = headroom;
++
++                if (headroom != 0 && headroom < LowHeadroomBytes)
++                {
++                    RequestTrim(headroom <= CriticalHeadroomBytes ? TrimRequestCritical : TrimRequestWarning);
++                }
++            }
++
++            if (now >= _nextTelemetryTimestamp)
++            {
++                bool lowHeadroom = _lastHeadroom != 0 && _lastHeadroom < ComfortableHeadroomBytes;
++
++                _nextTelemetryTimestamp = now + (lowHeadroom ? TelemetryIntervalLowHeadroomMs : TelemetryIntervalMs);
++
++                LogMemoryTelemetry();
++            }
++
++            if (Volatile.Read(ref _pendingTrimRequest) == TrimRequestNone)
++            {
++                return;
++            }
++
++            int request = Interlocked.Exchange(ref _pendingTrimRequest, TrimRequestNone);
++
++            if (request != TrimRequestNone)
++            {
++                ApplyTrim(request == TrimRequestCritical ? MemoryPressureLevel.Critical : MemoryPressureLevel.Warning);
++            }
++        }
++
++        /// <summary>
++        /// Logs where GPU-side memory is going, so a log shows how much RAM the app holds and how trims change it.
++        /// Samples are numbered so identical consecutive lines are never mistaken for duplicates.
++        /// </summary>
++        private void LogMemoryTelemetry()
++        {
++            Image.TextureMemoryStats textures = default;
++            ulong bufferBytes = 0;
++
++            foreach (PhysicalMemory physicalMemory in PhysicalMemoryRegistry.Values)
++            {
++                Image.TextureMemoryStats stats = physicalMemory.TextureCache.GetMemoryStats();
++
++                textures.CacheBytes += stats.CacheBytes;
++                textures.CacheCount += stats.CacheCount;
++                textures.PoolBytes += stats.PoolBytes;
++                textures.PoolCount += stats.PoolCount;
++                textures.TotalCount += stats.TotalCount;
++
++                bufferBytes += physicalMemory.BufferCache.CachedBytes;
++            }
++
++            ulong footprint = HostMemoryBudget.FootprintBytes;
++
++            string host = string.Empty;
++
++            if (footprint != 0)
++            {
++                host += $"footprint {footprint / TrimMiB} MiB, ";
++            }
++
++            if (_lastHeadroom != 0)
++            {
++                host += $"headroom {_lastHeadroom / TrimMiB} MiB, ";
++            }
++
++            Logger.Info?.Print(LogClass.Gpu,
++                $"Memory #{++_telemetrySample}: {host}" +
++                $"textures: cache {textures.CacheBytes / TrimMiB} MiB ({textures.CacheCount}), " +
++                $"pools {textures.PoolBytes / TrimMiB} MiB ({textures.PoolCount}), " +
++                $"tracked {textures.TotalCount} | buffers {bufferBytes / TrimMiB} MiB");
++        }
++
++        /// <summary>
++        /// Evicts GPU resource caches, in proportion to what they are actually holding and only when
++        /// this process looks like the one under pressure. Must run on the GPU thread.
++        /// </summary>
++        /// <param name="level">How much the host wants back</param>
++        private void ApplyTrim(MemoryPressureLevel level)
++        {
+             ulong available = HostMemoryBudget.AvailableBytes;
+ 
+             if (available != 0)
+
+--- a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-11 00:04:05.000000000 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-12 21:20:00.061860507 -0500
+@@ -241,6 +241,16 @@
+         private const ulong TrimFloorDivisor = 8;
+ 
+         /// <summary>
++        /// Estimated host memory held by the textures in the cache.
++        /// </summary>
++        public ulong TotalSize => _totalSize;
++
++        /// <summary>
++        /// Number of textures in the cache.
++        /// </summary>
++        public int Count => _textures.Count;
++
++        /// <summary>
+         /// Evicts textures in response to host memory pressure, in proportion to what the cache is
+         /// actually holding. The limit itself is left alone, so the cache refills as it is used again.
+         /// </summary>
+
+--- a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-11 00:04:05.000000000 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-12 21:20:00.060872229 -0500
+@@ -170,6 +170,70 @@
+         public ulong CacheSize { get; set; }
+ 
+         /// <summary>
++        /// GPU sequence number at which a texture pool last handed this texture out for binding.
++        /// Used to order pool-owned textures by recency when memory must be given back.
++        /// </summary>
++        public int LastPoolUseSequence { get; set; }
++
++        /// <summary>
++        /// Number of texture pool entries currently referencing this texture.
++        /// </summary>
++        public int PoolOwnerCount
++        {
++            get
++            {
++                lock (_poolOwners)
++                {
++                    return _poolOwners.Count;
++                }
++            }
++        }
++
++        /// <summary>
++        /// Checks if this texture is kept alive only by texture pool entries, and can be released from them
++        /// and rebuilt from guest memory the next time a pool needs it. Must run on the GPU thread.
++        /// </summary>
++        /// <returns>True if releasing the pool references would free the host texture, false otherwise</returns>
++        public bool CanReleaseFromPools()
++        {
++            if (IsView ||
++                HasViews ||
++                Target == Target.TextureBuffer ||
++                CacheNode != null ||
++                ShortCacheEntry != null ||
++                Group.HasCopyDependencies)
++            {
++                return false;
++            }
++
++            lock (_poolOwners)
++            {
++                // Any reference beyond the pool entries (render target binding, alias list, overlap
++                // search in progress, ...) means the host texture would stay alive regardless.
++                return _poolOwners.Count > 0 && _referenceCount == _poolOwners.Count;
++            }
++        }
++
++        /// <summary>
++        /// Writes back any data the GPU produced for this texture, then removes it from all texture pools.
++        /// The host texture is freed, and recreated from guest memory when a pool next needs it.
++        /// </summary>
++        public void FlushAndReleaseFromPools()
++        {
++            if (!CheckModified(false))
++            {
++                // Same rule as when a texture falls out of the auto delete cache: data written by the GPU
++                // must reach guest memory before the host copy is dropped. This is a no-op for textures
++                // that were only ever sampled.
++
++                Group.SynchronizeDependents(this);
++                FlushModified(false);
++            }
++
++            RemoveFromPools(false);
++        }
++
++        /// <summary>
+         /// Estimates host texture storage and any retained CPU-side comparison copy.
+         /// </summary>
+         public ulong GetEstimatedHostSize()
+
+--- a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-11 00:04:05.000000000 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 00:22:16.952127947 -0500
+@@ -492,6 +492,7 @@
+                     state.CachedSampler?.IsDisposed != true)
+                 {
+                     // The texture is already bound.
++                    state.CachedTexture.LastPoolUseSequence = _context.SequenceNumber;
+                     state.CachedTexture.SynchronizeMemory();
+ 
+                     if ((usageFlags & TextureUsageFlags.NeedsScaleValue) != 0 &&
+@@ -625,6 +626,7 @@
+                     Texture cachedTexture = state.CachedTexture;
+ 
+                     // The texture is already bound.
++                    cachedTexture.LastPoolUseSequence = _context.SequenceNumber;
+                     cachedTexture.SynchronizeMemory();
+ 
+                     if (isStore)
+
+--- a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-11 00:04:05.000000000 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-12 21:20:12.574596032 -0500
+@@ -1,4 +1,5 @@
+ using Ryujinx.Common;
++using Ryujinx.Common.Logging;
+ using Ryujinx.Graphics.GAL;
+ using Ryujinx.Memory;
+ using Ryujinx.Graphics.Gpu.Engine.Threed;
+@@ -225,7 +226,134 @@
+         /// <returns>Number of bytes evicted</returns>
+         public ulong Trim(MemoryPressureLevel level)
+         {
+-            return _cache.Trim(level);
++            return _cache.Trim(level) + TrimPoolTextures(level);
++        }
++
++        private const ulong PoolTrimMiB = 1024 * 1024;
++
++        // A pool texture must have gone unused for this many GPU sequences (roughly frames) to be released.
++        private const int PoolTrimMinAgeWarning = 120;
++        private const int PoolTrimMinAgeCritical = 30;
++
++        // Most estimated host memory released from the pools by a single trim.
++        private const ulong PoolTrimBudgetWarning = 64 * PoolTrimMiB;
++        private const ulong PoolTrimBudgetCritical = 192 * PoolTrimMiB;
++
++        private readonly List<Texture> _trimCandidates = [];
++
++        /// <summary>
++        /// Releases the least recently used textures that only texture pools keep alive. They are rebuilt from
++        /// guest memory the next time a pool hands them out, so the cost is a re-upload, not lost data: anything
++        /// the GPU wrote to a texture is flushed to guest memory before its host copy is dropped.
++        /// Must run on the GPU thread.
++        /// </summary>
++        /// <param name="level">How much the host wants back</param>
++        /// <returns>Estimated bytes of host memory released</returns>
++        private ulong TrimPoolTextures(MemoryPressureLevel level)
++        {
++            if (!GraphicsConfig.EnableHostMemoryBudgetTracking)
++            {
++                return 0;
++            }
++
++            bool critical = level == MemoryPressureLevel.Critical;
++
++            int minAge = critical ? PoolTrimMinAgeCritical : PoolTrimMinAgeWarning;
++            ulong budget = critical ? PoolTrimBudgetCritical : PoolTrimBudgetWarning;
++            int sequence = _context.SequenceNumber;
++
++            _trimCandidates.Clear();
++
++            // Releasing a texture takes the textures lock for writing, so candidates are collected first.
++            _texturesLock.EnterReadLock();
++
++            try
++            {
++                foreach (Texture texture in _textures)
++                {
++                    if (sequence - texture.LastPoolUseSequence >= minAge && texture.CanReleaseFromPools())
++                    {
++                        _trimCandidates.Add(texture);
++                    }
++                }
++            }
++            finally
++            {
++                _texturesLock.ExitReadLock();
++            }
++
++            _trimCandidates.Sort(static (a, b) => a.LastPoolUseSequence.CompareTo(b.LastPoolUseSequence));
++
++            ulong released = 0;
++            int count = 0;
++
++            foreach (Texture texture in _trimCandidates)
++            {
++                if (released >= budget)
++                {
++                    break;
++                }
++
++                // Earlier releases can change what is eligible (shared texture groups), and a texture
++                // can be listed twice if it spans several ranges.
++                if (!texture.CanReleaseFromPools())
++                {
++                    continue;
++                }
++
++                ulong size = texture.GetEstimatedHostSize();
++
++                texture.FlushAndReleaseFromPools();
++
++                released += size;
++                count++;
++            }
++
++            int candidates = _trimCandidates.Count;
++
++            _trimCandidates.Clear();
++
++            if (count != 0)
++            {
++                Logger.Info?.Print(LogClass.Gpu,
++                    $"Released {count} of {candidates} idle pool textures (~{released / PoolTrimMiB} MiB of host memory)");
++            }
++
++            return released;
++        }
++
++        /// <summary>
++        /// Memory held by textures, for diagnostics. Must run on the GPU thread.
++        /// </summary>
++        /// <returns>Texture memory statistics</returns>
++        public TextureMemoryStats GetMemoryStats()
++        {
++            TextureMemoryStats stats = default;
++
++            stats.CacheBytes = _cache.TotalSize;
++            stats.CacheCount = _cache.Count;
++
++            _texturesLock.EnterReadLock();
++
++            try
++            {
++                foreach (Texture texture in _textures)
++                {
++                    stats.TotalCount++;
++
++                    if (texture.PoolOwnerCount > 0)
++                    {
++                        stats.PoolCount++;
++                        stats.PoolBytes += texture.GetEstimatedHostSize();
++                    }
++                }
++            }
++            finally
++            {
++                _texturesLock.ExitReadLock();
++            }
++
++            return stats;
+         }
+ 
+         /// <summary>
+@@ -1472,4 +1600,16 @@
+             }
+         }
+     }
++
++    /// <summary>
++    /// Snapshot of the memory held by a texture cache.
++    /// </summary>
++    struct TextureMemoryStats
++    {
++        public ulong CacheBytes;
++        public int CacheCount;
++        public ulong PoolBytes;
++        public int PoolCount;
++        public int TotalCount;
++    }
+ }
+
+--- a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-11 00:04:05.000000000 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-12 21:19:30.013228604 -0500
+@@ -183,6 +183,11 @@
+ 
+             ref readonly TextureDescriptor descriptor = ref GetDescriptorRef(id);
+ 
++            if (texture != null)
++            {
++                texture.LastPoolUseSequence = Context.SequenceNumber;
++            }
++
+             if (texture == null)
+             {
+                 if (_invalidMap.IsSet(id))
+@@ -217,6 +222,8 @@
+ 
+                 Items[id] = texture;
+ 
++                texture.LastPoolUseSequence = Context.SequenceNumber;
++
+                 texture.IncrementReferenceCount(this, id, descriptor.UnpackAddress());
+ 
+                 DescriptorCache[id] = descriptor;
+
+--- a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-11 00:04:05.000000000 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-12 21:20:00.062889532 -0500
+@@ -172,6 +172,11 @@
+         private const ulong TrimFloorDivisor = 8;
+ 
+         /// <summary>
++        /// Bytes of buffer data currently held by the cache.
++        /// </summary>
++        public ulong CachedBytes => _cachedBufferBytes;
++
++        /// <summary>
+         /// Evicts buffers in response to host memory pressure, in proportion to what the cache is
+         /// actually holding. The limit itself is left alone, so the cache refills as it is used again.
+         /// </summary>
+
+--- a/src/Ryujinx.HLE/Switch.cs	2026-10-11 00:04:05.000000000 -0500
++++ b/src/Ryujinx.HLE/Switch.cs	2026-10-13 00:22:16.966950145 -0500
+@@ -131,6 +131,8 @@
+                 Gpu.TrimCaches(pressure);
+             }
+ 
++            Gpu.ProcessMemoryPressure();
++
+             Gpu.ProcessShaderCacheQueue();
+             Gpu.Renderer.PreFrame();
+             Gpu.GPFifo.DispatchCalls();
