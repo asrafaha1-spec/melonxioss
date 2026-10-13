@@ -91,11 +91,11 @@ jobs:
               mkdir -p "$d"
               assets="$(gh release view build-deps -R "$repo" --json assets -q '.assets[].name' 2>&1 | tr '\n' ' ' || true)"
               echo "::notice::$repo build-deps assets: $assets"
-              err="$(gh release download build-deps -R "$repo" -p '*LibHac*.nupkg' -D "$d" 2>&1 || true)"
+              err="$(gh release download build-deps -R "$repo" -p '*libhac*.nupkg' -D "$d" 2>&1 || true)"
               [ -z "$err" ] || echo "::warning::$repo download: ${err:0:300}"
               n=$((n + 1))
             done
-            files="$(find mirror -name '*LibHac*.nupkg' -type f | sort)"
+            files="$(find mirror -iname '*libhac*.nupkg' -type f | sort)"
             count="$(echo "$files" | grep -c . || true)"
             if [ "$count" -lt 2 ]; then
               echo "::error::Only $count mirror copies of Ryujinx.LibHac found; need 2 to cross-check. Add the package to local-nuget/ instead."
@@ -109,7 +109,9 @@ jobs:
               echo "::error::The two mirror copies of Ryujinx.LibHac differ. Not using them."
               exit 1
             fi
-            cp "$(echo "$files" | head -n 1)" local-nuget/
+            src="$(echo "$files" | head -n 1)"
+            lower="$(basename "$src" .nupkg | tr 'A-Z' 'a-z')"
+            cp "$src" "local-nuget/Ryujinx.LibHac.${lower#ryujinx.libhac.}.nupkg"
             echo "::notice::Ryujinx.LibHac from mirrors: $names sha256=$hashes"
           fi
           ls -la local-nuget
