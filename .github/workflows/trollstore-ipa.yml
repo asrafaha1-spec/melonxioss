@@ -1,0 +1,191 @@
+name: TrollStore IPA (2.7 + memory trim)
+run-name: TrollStore IPA (${{ github.ref_name }})
+
+# Builds only the emulator core (Ryujinx.Library.dylib, NativeAOT, ios-arm64) from the MeloNX 2.7 source with
+# patches/melonx-2.7-memory-trim-full.patch applied, drops it into the MeloNX.ipa already in this repository,
+# strips the old developer signatures and fake-signs every binary with ldid so TrollStore can install it.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - memory-trim
+    paths:
+      - ".github/workflows/trollstore-ipa.yml"
+      - "patches/**"
+      - "MeloNX.ipa"
+      - "MeloNX-2.7.zip"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trollstore-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build TrollStore IPA
+    runs-on: macos-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Select newest Xcode
+        run: |
+          set -euo pipefail
+          selected_xcode="$(find /Applications -maxdepth 1 -name 'Xcode*.app' -print | sort -V | tail -n 1)"
+          if [ -z "$selected_xcode" ]; then
+            echo "No Xcode installation found" >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$selected_xcode/Contents/Developer"
+          xcodebuild -version
+
+      - name: Extract and patch the 2.7 source
+        run: |
+          set -euo pipefail
+          test "$(stat -f%z MeloNX-2.7.zip)" -gt 1000000 || { echo "MeloNX-2.7.zip is still an LFS pointer" >&2; exit 1; }
+          mkdir -p work
+          unzip -q MeloNX-2.7.zip -d work
+          cd work/melonx
+          patch -p1 --dry-run < "$GITHUB_WORKSPACE/patches/melonx-2.7-memory-trim-full.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/patches/melonx-2.7-memory-trim-full.patch"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: work/melonx/global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-trollstore-${{ hashFiles('work/melonx/Directory.Packages.props', 'work/melonx/nuget.config') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-trollstore-
+
+      - name: Install .NET iOS workload
+        continue-on-error: true
+        run: dotnet workload install ios
+
+      - name: Build Ryujinx.Library (NativeAOT, ios-arm64)
+        working-directory: work/melonx
+        run: |
+          set -euo pipefail
+          dotnet publish src/Ryujinx.Library/Ryujinx.Library.csproj \
+            -c Release -r ios-arm64 \
+            -p:XCodePath="$(xcode-select -p)/"
+          find src/Ryujinx.Library/bin -name 'Ryujinx.Library.dylib' -print
+
+      - name: Unpack the base IPA
+        run: |
+          set -euo pipefail
+          rm -rf ipa
+          mkdir ipa
+          unzip -q MeloNX.ipa -d ipa
+          test -d ipa/Payload/MeloNX.app
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ipa/Payload/MeloNX.app/Info.plist
+
+      - name: Swap in the rebuilt core
+        run: |
+          set -euo pipefail
+          old="ipa/Payload/MeloNX.app/Frameworks/Ryujinx.Library.dylib"
+          new="$(find work/melonx/src/Ryujinx.Library/bin -path '*native*' -name 'Ryujinx.Library.dylib' -type f -print -quit)"
+          test -f "$old"
+          test -f "$new"
+
+          lipo -info "$new"
+          oldid="$(otool -D "$old" | tail -n 1)"
+          echo "Original install name: $oldid"
+
+          # Every symbol the shipped app can import must still be exported by the new build.
+          nm -gU "$old" | awk '{print $3}' | sort -u > old.syms
+          nm -gU "$new" | awk '{print $3}' | sort -u > new.syms
+          missing="$(comm -23 old.syms new.syms || true)"
+          if [ -n "$missing" ]; then
+            echo "The rebuilt dylib is missing exports the app needs:" >&2
+            echo "$missing" | head -50 >&2
+            exit 1
+          fi
+
+          cp "$new" "$old"
+          install_name_tool -id "$oldid" "$old"
+          ls -la "$old"
+
+          # Soft check that the patched code is in the binary (NativeAOT stores literals as UTF-16).
+          if python3 -c "import sys; sys.exit(0 if ' idle pool textures'.encode('utf-16-le') in open(sys.argv[1],'rb').read() else 1)" "$old"; then
+            echo "Patch marker found in the rebuilt dylib"
+          else
+            echo "::warning::Patch marker string not found in the rebuilt dylib"
+          fi
+
+      - name: Strip old signatures and fake-sign for TrollStore
+        run: |
+          set -euo pipefail
+          brew install ldid
+
+          app="ipa/Payload/MeloNX.app"
+
+          find ipa -name '_CodeSignature' -type d -prune -exec rm -rf {} +
+          find ipa -name 'embedded.mobileprovision' -type f -delete
+
+          cat > main.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.developer.kernel.increased-memory-limit</key>
+              <true/>
+              <key>com.apple.developer.kernel.extended-virtual-addressing</key>
+              <true/>
+              <key>get-task-allow</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+          cat > appex.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>get-task-allow</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+          # Nested libraries and frameworks first, with no entitlements of their own.
+          find "$app/Frameworks" -type f | while read -r f; do
+            if file "$f" | grep -q 'Mach-O'; then
+              ldid -S "$f"
+            fi
+          done
+
+          ldid -Sappex.xml "$app/PlugIns/MeloNXRamDonor.appex/MeloNXRamDonor"
+          ldid -Smain.xml "$app/MeloNX"
+
+          echo "--- main entitlements"
+          ldid -e "$app/MeloNX"
+          echo "--- extension entitlements"
+          ldid -e "$app/PlugIns/MeloNXRamDonor.appex/MeloNXRamDonor"
+
+      - name: Package the IPA
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          (cd ipa && zip -qry ../out/MeloNX-2.7-memory-trim-trollstore.ipa .)
+          unzip -l out/MeloNX-2.7-memory-trim-trollstore.ipa | grep -E 'Ryujinx.Library.dylib|MeloNX.app/MeloNX$|RamDonor$'
+          du -sh out/MeloNX-2.7-memory-trim-trollstore.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeloNX-2.7-memory-trim-trollstore-ipa
+          path: out/MeloNX-2.7-memory-trim-trollstore.ipa
+          if-no-files-found: error
