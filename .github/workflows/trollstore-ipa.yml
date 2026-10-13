@@ -73,16 +73,22 @@ jobs:
         continue-on-error: true
         run: dotnet workload install ios
 
-      - name: Probe NuGet feeds
-        continue-on-error: true
+      - name: Let nuget.org also serve Ryujinx.LibHac
         run: |
-          feed="https://starforgejo.dev/api/packages/Ryulynx/nuget"
-          code="$(curl -s -m 30 -o feed.json -w '%{http_code}' "$feed/index.json" || true)"
-          echo "::notice::forgejo index http=$code body=$(head -c 400 feed.json 2>/dev/null | tr '\n' ' ')"
-          code="$(curl -s -m 30 -o flat.json -w '%{http_code}' "$feed/package/Ryujinx.LibHac/index.json" || true)"
-          echo "::notice::forgejo flat http=$code body=$(head -c 600 flat.json 2>/dev/null | tr '\n' ' ')"
-          code="$(curl -s -m 30 -o nuget.json -w '%{http_code}' https://api.nuget.org/v3-flatcontainer/ryujinx.libhac/index.json || true)"
-          echo "::notice::nuget.org http=$code versions=$(head -c 800 nuget.json 2>/dev/null | tr '\n' ' ')"
+          set -euo pipefail
+          cd work/melonx
+          python3 - <<'PY'
+          import re
+          p = 'nuget.config'
+          s = open(p, encoding='utf-8-sig').read()
+          s = s.replace('<packageSource key="nuget.org">\n            <package pattern="*" />',
+                        '<packageSource key="nuget.org">\n            <package pattern="*" />\n            <package pattern="Ryujinx.LibHac" />', 1)
+          assert 'pattern="Ryujinx.LibHac" />\n        </packageSource>\n        <packageSource key="LibHacAlpha">' in s or s.count('Ryujinx.LibHac') >= 2
+          open(p, 'w', encoding='utf-8').write(s)
+          PY
+          grep -n "LibHac" nuget.config
+          curl -s -m 30 https://api.nuget.org/v3-flatcontainer/ryujinx.libhac/index.json -o "$RUNNER_TEMP/libhac.json" || true
+          echo "::notice::nuget.org Ryujinx.LibHac 0.21 versions: $(jq -r '.versions[]' "$RUNNER_TEMP/libhac.json" 2>/dev/null | grep '^0.21' | tr '\n' ' ')"
 
       - name: Build Ryujinx.Library (NativeAOT, ios-arm64)
         working-directory: work/melonx
