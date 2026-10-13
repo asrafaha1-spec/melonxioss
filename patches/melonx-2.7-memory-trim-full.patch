@@ -1,12 +1,18 @@
-
---- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-11 00:04:05.000000000 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 00:22:41.059833172 -0500
-@@ -342,12 +342,33 @@
+diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/GpuContext.cs
+--- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:27:52.151587034 -0500
++++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:27:52.319011108 -0500
+@@ -342,12 +342,39 @@
          private const ulong CriticalHeadroomBytes = 256 * TrimMiB;
          private const long MinimumTrimIntervalMs = 2000;
  
 +        // Headroom below which the GPU thread asks for a trim on its own, without waiting for the host to report pressure.
 +        private const ulong LowHeadroomBytes = 450 * TrimMiB;
++
++        // Proactive trim: when this process's own footprint passes the soft limit, idle pool textures and cache
++        // entries are released even though the system still reports plenty of headroom.
++        private const ulong SoftFootprintBytes = 600 * TrimMiB;
++        private const long FootprintTrimIntervalMs = 5000;
++        private long _nextFootprintTrimTimestamp;
 +        private const long HeadroomPollIntervalMs = 500;
 +
 +        private const int TrimRequestNone = 0;
@@ -37,7 +43,7 @@
          /// <param name="level">How much the host wants back</param>
          public void TrimCaches(MemoryPressureLevel level)
          {
-@@ -356,6 +377,135 @@
+@@ -356,9 +383,149 @@
                  return;
              }
  
@@ -95,6 +101,17 @@
 +                if (headroom != 0 && headroom < LowHeadroomBytes)
 +                {
 +                    RequestTrim(headroom <= CriticalHeadroomBytes ? TrimRequestCritical : TrimRequestWarning);
++                }
++                else if (now >= _nextFootprintTrimTimestamp)
++                {
++                    ulong footprint = HostMemoryBudget.FootprintBytes;
++
++                    if (footprint > SoftFootprintBytes)
++                    {
++                        _nextFootprintTrimTimestamp = now + FootprintTrimIntervalMs;
++
++                        ApplyTrim(MemoryPressureLevel.Warning, footprint);
++                    }
 +                }
 +            }
 +
@@ -168,14 +185,30 @@
 +        /// this process looks like the one under pressure. Must run on the GPU thread.
 +        /// </summary>
 +        /// <param name="level">How much the host wants back</param>
-+        private void ApplyTrim(MemoryPressureLevel level)
++        private void ApplyTrim(MemoryPressureLevel level, ulong footprintTrigger = 0)
 +        {
              ulong available = HostMemoryBudget.AvailableBytes;
  
-             if (available != 0)
-
---- a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-11 00:04:05.000000000 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-12 21:20:00.061860507 -0500
+-            if (available != 0)
++            if (available != 0 && footprintTrigger == 0)
+             {
+                 if (available >= ComfortableHeadroomBytes)
+                 {
+@@ -401,6 +568,11 @@
+ 
+             string headroom = available != 0 ? $", {available / TrimMiB} MiB available" : string.Empty;
+ 
++            if (footprintTrigger != 0)
++            {
++                headroom += $", footprint {footprintTrigger / TrimMiB} MiB over the {SoftFootprintBytes / TrimMiB} MiB soft limit";
++            }
++
+             Logger.Info?.Print(LogClass.Gpu,
+                 $"Host reported {level} memory pressure{headroom}, released {evicted / TrimMiB} MiB of GPU caches");
+         }
+diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs
+--- a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:27:52.151739465 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:27:52.315955106 -0500
 @@ -241,6 +241,16 @@
          private const ulong TrimFloorDivisor = 8;
  
@@ -193,9 +226,9 @@
          /// Evicts textures in response to host memory pressure, in proportion to what the cache is
          /// actually holding. The limit itself is left alone, so the cache refills as it is used again.
          /// </summary>
-
---- a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-11 00:04:05.000000000 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-12 21:20:00.060872229 -0500
+diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs
+--- a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:27:52.152433838 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:27:52.316402837 -0500
 @@ -170,6 +170,70 @@
          public ulong CacheSize { get; set; }
  
@@ -267,9 +300,9 @@
          /// Estimates host texture storage and any retained CPU-side comparison copy.
          /// </summary>
          public ulong GetEstimatedHostSize()
-
---- a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-11 00:04:05.000000000 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 00:22:16.952127947 -0500
+diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs
+--- a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:27:52.152627911 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:27:52.316616550 -0500
 @@ -492,6 +492,7 @@
                      state.CachedSampler?.IsDisposed != true)
                  {
@@ -286,9 +319,9 @@
                      cachedTexture.SynchronizeMemory();
  
                      if (isStore)
-
---- a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-11 00:04:05.000000000 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-12 21:20:12.574596032 -0500
+diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs
+--- a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:27:52.152777272 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:27:52.316654812 -0500
 @@ -1,4 +1,5 @@
  using Ryujinx.Common;
 +using Ryujinx.Common.Logging;
@@ -448,9 +481,9 @@
 +        public int TotalCount;
 +    }
  }
-
---- a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-11 00:04:05.000000000 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-12 21:19:30.013228604 -0500
+diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs
+--- a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:27:52.153698636 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:27:52.317225587 -0500
 @@ -183,6 +183,11 @@
  
              ref readonly TextureDescriptor descriptor = ref GetDescriptorRef(id);
@@ -472,9 +505,9 @@
                  texture.IncrementReferenceCount(this, id, descriptor.UnpackAddress());
  
                  DescriptorCache[id] = descriptor;
-
---- a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-11 00:04:05.000000000 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-12 21:20:00.062889532 -0500
+diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs
+--- a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:27:52.154102365 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:27:52.317728735 -0500
 @@ -172,6 +172,11 @@
          private const ulong TrimFloorDivisor = 8;
  
@@ -487,9 +520,9 @@
          /// Evicts buffers in response to host memory pressure, in proportion to what the cache is
          /// actually holding. The limit itself is left alone, so the cache refills as it is used again.
          /// </summary>
-
---- a/src/Ryujinx.HLE/Switch.cs	2026-10-11 00:04:05.000000000 -0500
-+++ b/src/Ryujinx.HLE/Switch.cs	2026-10-13 00:22:16.966950145 -0500
+diff -ruN a/src/Ryujinx.HLE/Switch.cs b/src/Ryujinx.HLE/Switch.cs
+--- a/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:27:52.197010010 -0500
++++ b/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:27:52.359373194 -0500
 @@ -131,6 +131,8 @@
                  Gpu.TrimCaches(pressure);
              }
