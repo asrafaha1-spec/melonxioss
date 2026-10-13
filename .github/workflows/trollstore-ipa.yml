@@ -90,6 +90,20 @@ jobs:
           curl -s -m 30 https://api.nuget.org/v3-flatcontainer/ryujinx.libhac/index.json -o "$RUNNER_TEMP/libhac.json" || true
           echo "::notice::nuget.org Ryujinx.LibHac 0.21 versions: $(jq -r '.versions[]' "$RUNNER_TEMP/libhac.json" 2>/dev/null | grep '^0.21' | tr '\n' ' ')"
 
+      - name: Probe Forgejo feeds for Ryujinx.LibHac
+        continue-on-error: true
+        run: |
+          for owner in Ryulynx projects Ryujinx MeloNX Stossy11 ryubing; do
+            url="https://starforgejo.dev/api/packages/$owner/nuget/query?q=LibHac&prerelease=true&take=20"
+            code="$(curl -s -m 30 -o q.json -w '%{http_code}' "$url" || true)"
+            hits="$(jq -c '[.data[]? | {id, v: .version}]' q.json 2>/dev/null | head -c 500)"
+            echo "::notice::feed $owner http=$code hits=$hits"
+          done
+          for url in "https://git.ryujinx.app/api/v4/projects/1/packages/nuget/index.json" "https://git.ryujinx.app/api/v4/packages/nuget/index.json"; do
+            code="$(curl -s -m 30 -o /dev/null -w '%{http_code}' "$url" || true)"
+            echo "::notice::ryubing gitlab $url http=$code"
+          done
+
       - name: Build Ryujinx.Library (NativeAOT, ios-arm64)
         working-directory: work/melonx
         run: |
