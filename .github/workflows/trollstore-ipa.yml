@@ -89,11 +89,13 @@ jobs:
             for repo in GRID0-net/GRID0-ryujinx NextendoNetwork/Ryujinx-Nextendo; do
               d="mirror/$n"
               mkdir -p "$d"
-              gh release download build-deps -R "$repo" -p 'Ryujinx.LibHac*.nupkg' -D "$d" \
-                || echo "::warning::could not download the LibHac package from $repo"
+              assets="$(gh release view build-deps -R "$repo" --json assets -q '.assets[].name' 2>&1 | tr '\n' ' ' || true)"
+              echo "::notice::$repo build-deps assets: $assets"
+              err="$(gh release download build-deps -R "$repo" -p '*LibHac*.nupkg' -D "$d" 2>&1 || true)"
+              [ -z "$err" ] || echo "::warning::$repo download: ${err:0:300}"
               n=$((n + 1))
             done
-            files="$(find mirror -name 'Ryujinx.LibHac*.nupkg' -type f | sort)"
+            files="$(find mirror -name '*LibHac*.nupkg' -type f | sort)"
             count="$(echo "$files" | grep -c . || true)"
             if [ "$count" -lt 2 ]; then
               echo "::error::Only $count mirror copies of Ryujinx.LibHac found; need 2 to cross-check. Add the package to local-nuget/ instead."
