@@ -77,10 +77,19 @@ jobs:
         working-directory: work/melonx
         run: |
           set -euo pipefail
+          dotnet --version
           dotnet publish src/Ryujinx.Library/Ryujinx.Library.csproj \
             -c Release -r ios-arm64 \
-            -p:XCodePath="$(xcode-select -p)/"
+            -p:XCodePath="$(xcode-select -p)/" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
           find src/Ryujinx.Library/bin -name 'Ryujinx.Library.dylib' -print
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          if [ -f build.log ]; then
+            grep -E "error|Error" build.log | sort -u | head -15 | while IFS= read -r l; do echo "::error::${l:0:500}"; done
+            echo "::error::LOG TAIL: $(tail -n 30 build.log | tr '\n' '|' | cut -c1-3500)"
+          fi
 
       - name: Unpack the base IPA
         run: |
