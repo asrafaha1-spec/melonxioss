@@ -73,6 +73,17 @@ jobs:
         continue-on-error: true
         run: dotnet workload install ios
 
+      - name: Probe NuGet feeds
+        continue-on-error: true
+        run: |
+          feed="https://starforgejo.dev/api/packages/Ryulynx/nuget"
+          code="$(curl -s -m 30 -o feed.json -w '%{http_code}' "$feed/index.json" || true)"
+          echo "::notice::forgejo index http=$code body=$(head -c 400 feed.json 2>/dev/null | tr '\n' ' ')"
+          code="$(curl -s -m 30 -o flat.json -w '%{http_code}' "$feed/package/Ryujinx.LibHac/index.json" || true)"
+          echo "::notice::forgejo flat http=$code body=$(head -c 600 flat.json 2>/dev/null | tr '\n' ' ')"
+          code="$(curl -s -m 30 -o nuget.json -w '%{http_code}' https://api.nuget.org/v3-flatcontainer/ryujinx.libhac/index.json || true)"
+          echo "::notice::nuget.org http=$code versions=$(head -c 800 nuget.json 2>/dev/null | tr '\n' ' ')"
+
       - name: Build Ryujinx.Library (NativeAOT, ios-arm64)
         working-directory: work/melonx
         run: |
