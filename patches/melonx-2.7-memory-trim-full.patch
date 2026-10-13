@@ -1,6 +1,6 @@
 diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/GpuContext.cs
---- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:44:35.405715612 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:44:37.212754513 -0500
+--- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:47:29.270276977 -0500
++++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:47:30.115149645 -0500
 @@ -342,12 +342,39 @@
          private const ulong CriticalHeadroomBytes = 256 * TrimMiB;
          private const long MinimumTrimIntervalMs = 2000;
@@ -152,7 +152,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
 +
 +            GCMemoryInfo gc = GC.GetGCMemoryInfo();
 +
-+            text += $" | managed: heap {GC.GetTotalMemory(false) / TrimMiB}, committed {gc.TotalCommittedBytes / TrimMiB} MiB";
++            text += $" | managed: heap {(ulong)GC.GetTotalMemory(false) / TrimMiB}, committed {(ulong)gc.TotalCommittedBytes / TrimMiB} MiB";
 +
 +            return text;
 +        }
@@ -223,8 +223,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
                  $"Host reported {level} memory pressure{headroom}, released {evicted / TrimMiB} MiB of GPU caches");
          }
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:44:35.406247199 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:44:37.198691324 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:47:29.270540482 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:47:30.111632822 -0500
 @@ -241,6 +241,16 @@
          private const ulong TrimFloorDivisor = 8;
  
@@ -243,8 +243,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs b/src/Ryujinx.Grap
          /// actually holding. The limit itself is left alone, so the cache refills as it is used again.
          /// </summary>
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:44:35.409256830 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:44:37.200405653 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:47:29.272946389 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:47:30.113382505 -0500
 @@ -170,6 +170,70 @@
          public ulong CacheSize { get; set; }
  
@@ -317,8 +317,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs b/src/Ryujinx.Graphics.Gpu
          /// </summary>
          public ulong GetEstimatedHostSize()
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:44:35.409971500 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:44:37.200782005 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:47:29.273788405 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:47:30.113786089 -0500
 @@ -492,6 +492,7 @@
                      state.CachedSampler?.IsDisposed != true)
                  {
@@ -336,8 +336,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs b/src/Ryuji
  
                      if (isStore)
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:44:35.410213742 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:44:37.200905271 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:47:29.274060734 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:47:30.113894949 -0500
 @@ -1,4 +1,5 @@
  using Ryujinx.Common;
 +using Ryujinx.Common.Logging;
@@ -498,8 +498,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs b/src/Ryujinx.Graphic
 +    }
  }
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:44:35.412895417 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:44:37.202220135 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:47:29.277788886 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:47:30.114762045 -0500
 @@ -183,6 +183,11 @@
  
              ref readonly TextureDescriptor descriptor = ref GetDescriptorRef(id);
@@ -522,8 +522,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs b/src/Ryujinx.Graphics
  
                  DescriptorCache[id] = descriptor;
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs
---- a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:44:35.415107988 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:44:37.203536785 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:47:29.280387389 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:47:30.115574666 -0500
 @@ -172,6 +172,11 @@
          private const ulong TrimFloorDivisor = 8;
  
@@ -537,8 +537,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs b/src/Ryujinx.Graphic
          /// actually holding. The limit itself is left alone, so the cache refills as it is used again.
          /// </summary>
 diff -ruN a/src/Ryujinx.HLE/Switch.cs b/src/Ryujinx.HLE/Switch.cs
---- a/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:44:35.866522979 -0500
-+++ b/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:44:37.714776640 -0500
+--- a/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:47:29.619398701 -0500
++++ b/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:47:30.354967421 -0500
 @@ -131,6 +131,8 @@
                  Gpu.TrimCaches(pressure);
              }
@@ -549,8 +549,8 @@ diff -ruN a/src/Ryujinx.HLE/Switch.cs b/src/Ryujinx.HLE/Switch.cs
              Gpu.Renderer.PreFrame();
              Gpu.GPFifo.DispatchCalls();
 diff -ruN a/src/Ryujinx.Memory/HostMemoryBudget.cs b/src/Ryujinx.Memory/HostMemoryBudget.cs
---- a/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-13 06:44:36.022910127 -0500
-+++ b/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-13 06:44:37.838547718 -0500
+--- a/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-13 06:47:29.689456047 -0500
++++ b/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-13 06:47:30.420017575 -0500
 @@ -77,6 +77,42 @@
          }
  
