@@ -1,6 +1,6 @@
 diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/GpuContext.cs
---- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:27:52.151587034 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:27:52.319011108 -0500
+--- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:44:35.405715612 -0500
++++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-13 06:44:37.212754513 -0500
 @@ -342,12 +342,39 @@
          private const ulong CriticalHeadroomBytes = 256 * TrimMiB;
          private const long MinimumTrimIntervalMs = 2000;
@@ -10,7 +10,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
 +
 +        // Proactive trim: when this process's own footprint passes the soft limit, idle pool textures and cache
 +        // entries are released even though the system still reports plenty of headroom.
-+        private const ulong SoftFootprintBytes = 600 * TrimMiB;
++        private const ulong SoftFootprintBytes = 700 * TrimMiB;
 +        private const long FootprintTrimIntervalMs = 5000;
 +        private long _nextFootprintTrimTimestamp;
 +        private const long HeadroomPollIntervalMs = 500;
@@ -43,7 +43,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
          /// <param name="level">How much the host wants back</param>
          public void TrimCaches(MemoryPressureLevel level)
          {
-@@ -356,9 +383,149 @@
+@@ -356,9 +383,165 @@
                  return;
              }
  
@@ -141,6 +141,22 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
 +        /// Logs where GPU-side memory is going, so a log shows how much RAM the app holds and how trims change it.
 +        /// Samples are numbered so identical consecutive lines are never mistaken for duplicates.
 +        /// </summary>
++        private static string GetProcessBreakdown()
++        {
++            string text = string.Empty;
++
++            if (HostMemoryBudget.TryGetVmBreakdown(out ulong resident, out ulong device, out ulong dirty, out ulong external, out ulong compressed))
++            {
++                text += $" | vm: resident {resident / TrimMiB}, internal {dirty / TrimMiB}, external {external / TrimMiB}, device {device / TrimMiB}, compressed {compressed / TrimMiB} MiB";
++            }
++
++            GCMemoryInfo gc = GC.GetGCMemoryInfo();
++
++            text += $" | managed: heap {GC.GetTotalMemory(false) / TrimMiB}, committed {gc.TotalCommittedBytes / TrimMiB} MiB";
++
++            return text;
++        }
++
 +        private void LogMemoryTelemetry()
 +        {
 +            Image.TextureMemoryStats textures = default;
@@ -177,7 +193,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
 +                $"Memory #{++_telemetrySample}: {host}" +
 +                $"textures: cache {textures.CacheBytes / TrimMiB} MiB ({textures.CacheCount}), " +
 +                $"pools {textures.PoolBytes / TrimMiB} MiB ({textures.PoolCount}), " +
-+                $"tracked {textures.TotalCount} | buffers {bufferBytes / TrimMiB} MiB");
++                $"tracked {textures.TotalCount} | buffers {bufferBytes / TrimMiB} MiB" + GetProcessBreakdown());
 +        }
 +
 +        /// <summary>
@@ -194,7 +210,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
              {
                  if (available >= ComfortableHeadroomBytes)
                  {
-@@ -401,6 +568,11 @@
+@@ -401,6 +584,11 @@
  
              string headroom = available != 0 ? $", {available / TrimMiB} MiB available" : string.Empty;
  
@@ -207,8 +223,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
                  $"Host reported {level} memory pressure{headroom}, released {evicted / TrimMiB} MiB of GPU caches");
          }
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:27:52.151739465 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:27:52.315955106 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:44:35.406247199 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-13 06:44:37.198691324 -0500
 @@ -241,6 +241,16 @@
          private const ulong TrimFloorDivisor = 8;
  
@@ -227,8 +243,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs b/src/Ryujinx.Grap
          /// actually holding. The limit itself is left alone, so the cache refills as it is used again.
          /// </summary>
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:27:52.152433838 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:27:52.316402837 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:44:35.409256830 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-13 06:44:37.200405653 -0500
 @@ -170,6 +170,70 @@
          public ulong CacheSize { get; set; }
  
@@ -301,8 +317,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs b/src/Ryujinx.Graphics.Gpu
          /// </summary>
          public ulong GetEstimatedHostSize()
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:27:52.152627911 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:27:52.316616550 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:44:35.409971500 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-13 06:44:37.200782005 -0500
 @@ -492,6 +492,7 @@
                      state.CachedSampler?.IsDisposed != true)
                  {
@@ -320,8 +336,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs b/src/Ryuji
  
                      if (isStore)
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:27:52.152777272 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:27:52.316654812 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:44:35.410213742 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-13 06:44:37.200905271 -0500
 @@ -1,4 +1,5 @@
  using Ryujinx.Common;
 +using Ryujinx.Common.Logging;
@@ -482,8 +498,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs b/src/Ryujinx.Graphic
 +    }
  }
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs
---- a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:27:52.153698636 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:27:52.317225587 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:44:35.412895417 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-13 06:44:37.202220135 -0500
 @@ -183,6 +183,11 @@
  
              ref readonly TextureDescriptor descriptor = ref GetDescriptorRef(id);
@@ -506,8 +522,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs b/src/Ryujinx.Graphics
  
                  DescriptorCache[id] = descriptor;
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs
---- a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:27:52.154102365 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:27:52.317728735 -0500
+--- a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:44:35.415107988 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-13 06:44:37.203536785 -0500
 @@ -172,6 +172,11 @@
          private const ulong TrimFloorDivisor = 8;
  
@@ -521,8 +537,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs b/src/Ryujinx.Graphic
          /// actually holding. The limit itself is left alone, so the cache refills as it is used again.
          /// </summary>
 diff -ruN a/src/Ryujinx.HLE/Switch.cs b/src/Ryujinx.HLE/Switch.cs
---- a/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:27:52.197010010 -0500
-+++ b/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:27:52.359373194 -0500
+--- a/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:44:35.866522979 -0500
++++ b/src/Ryujinx.HLE/Switch.cs	2026-10-13 06:44:37.714776640 -0500
 @@ -131,6 +131,8 @@
                  Gpu.TrimCaches(pressure);
              }
@@ -532,3 +548,49 @@ diff -ruN a/src/Ryujinx.HLE/Switch.cs b/src/Ryujinx.HLE/Switch.cs
              Gpu.ProcessShaderCacheQueue();
              Gpu.Renderer.PreFrame();
              Gpu.GPFifo.DispatchCalls();
+diff -ruN a/src/Ryujinx.Memory/HostMemoryBudget.cs b/src/Ryujinx.Memory/HostMemoryBudget.cs
+--- a/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-13 06:44:36.022910127 -0500
++++ b/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-13 06:44:37.838547718 -0500
+@@ -77,6 +77,42 @@
+         }
+ 
+ 
++        /// <summary>
++        /// Reads the task_vm_info breakdown of this process, in bytes. Returns false if unavailable.
++        /// </summary>
++        public static unsafe bool TryGetVmBreakdown(out ulong resident, out ulong device, out ulong internalBytes, out ulong externalBytes, out ulong compressed)
++        {
++            resident = device = internalBytes = externalBytes = compressed = 0;
++
++            if (!OperatingSystem.IsMacOS() && !OperatingSystem.IsIOS())
++            {
++                return false;
++            }
++
++            try
++            {
++                ulong* info = stackalloc ulong[(int)(TaskVmInfoCount / 2 + 1)];
++                uint count = TaskVmInfoCount;
++
++                if (TaskInfo(MachTaskSelf(), TaskVmInfo, info, &count) != 0)
++                {
++                    return false;
++                }
++
++                resident = info[16 / 8];
++                device = info[32 / 8];
++                internalBytes = info[48 / 8];
++                externalBytes = info[64 / 8];
++                compressed = info[120 / 8];
++
++                return true;
++            }
++            catch (EntryPointNotFoundException)
++            {
++                return false;
++            }
++        }
++
+         public static ulong TotalBytes
+         {
+             get
