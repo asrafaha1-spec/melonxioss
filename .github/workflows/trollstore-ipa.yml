@@ -74,16 +74,49 @@ jobs:
         continue-on-error: true
         run: dotnet workload install ios
 
-      - name: Use the local Ryujinx.LibHac package
+      - name: Get Ryujinx.LibHac (local-nuget/ first, else two public mirrors that must agree)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Ryujinx.LibHac 0.21.0-alpha.129 is no longer served by the feed in nuget.config, so it is taken
-          # from local-nuget/ in this repository.
+          # The feed in nuget.config no longer serves Ryujinx.LibHac. A package placed in local-nuget/ wins.
+          # Otherwise it is downloaded from two independent public mirrors of the original feed, and the build
+          # only continues if both files are byte-identical.
+          mkdir -p local-nuget
           if ! ls local-nuget/Ryujinx.LibHac.*.nupkg >/dev/null 2>&1; then
-            echo "::error::Add Ryujinx.LibHac.0.21.0-alpha.129.nupkg to the local-nuget/ folder of this repository."
-            exit 1
+            rm -rf mirror
+            n=0
+            for repo in GRID0-net/GRID0-ryujinx NextendoNetwork/Ryujinx-Nextendo; do
+              d="mirror/$n"
+              mkdir -p "$d"
+              gh release download build-deps -R "$repo" -p 'Ryujinx.LibHac*.nupkg' -D "$d" \
+                || echo "::warning::could not download the LibHac package from $repo"
+              n=$((n + 1))
+            done
+            files="$(find mirror -name 'Ryujinx.LibHac*.nupkg' -type f | sort)"
+            count="$(echo "$files" | grep -c . || true)"
+            if [ "$count" -lt 2 ]; then
+              echo "::error::Only $count mirror copies of Ryujinx.LibHac found; need 2 to cross-check. Add the package to local-nuget/ instead."
+              exit 1
+            fi
+            hashes="$(echo "$files" | while read -r f; do shasum -a 256 "$f" | awk '{print $1}'; done | sort -u)"
+            names="$(echo "$files" | while read -r f; do basename "$f"; done | sort -u)"
+            echo "sha256: $hashes"
+            echo "name: $names"
+            if [ "$(echo "$hashes" | wc -l | tr -d ' ')" != "1" ] || [ "$(echo "$names" | wc -l | tr -d ' ')" != "1" ]; then
+              echo "::error::The two mirror copies of Ryujinx.LibHac differ. Not using them."
+              exit 1
+            fi
+            cp "$(echo "$files" | head -n 1)" local-nuget/
+            echo "::notice::Ryujinx.LibHac from mirrors: $names sha256=$hashes"
           fi
           ls -la local-nuget
+
+          pkg="$(ls local-nuget/Ryujinx.LibHac.*.nupkg | head -n 1)"
+          ver="$(basename "$pkg" .nupkg | sed 's/^Ryujinx\.LibHac\.//')"
+          echo "Using Ryujinx.LibHac $ver"
+          sed -i '' "s|<PackageVersion Include=\"Ryujinx.LibHac\" Version=\"[^\"]*\"|<PackageVersion Include=\"Ryujinx.LibHac\" Version=\"$ver\"|" work/melonx/Directory.Packages.props
+          grep -n "Ryujinx.LibHac" work/melonx/Directory.Packages.props
           python3 - <<'PY'
           import os
           p = 'work/melonx/nuget.config'
