@@ -15,6 +15,7 @@ on:
       - "patches/**"
       - "MeloNX.ipa"
       - "MeloNX-2.7.zip"
+      - "local-nuget/**"
 
 permissions:
   contents: read
@@ -73,36 +74,27 @@ jobs:
         continue-on-error: true
         run: dotnet workload install ios
 
-      - name: Let nuget.org also serve Ryujinx.LibHac
+      - name: Use the local Ryujinx.LibHac package
         run: |
           set -euo pipefail
-          cd work/melonx
+          # Ryujinx.LibHac 0.21.0-alpha.129 is no longer served by the feed in nuget.config, so it is taken
+          # from local-nuget/ in this repository.
+          if ! ls local-nuget/Ryujinx.LibHac.*.nupkg >/dev/null 2>&1; then
+            echo "::error::Add Ryujinx.LibHac.0.21.0-alpha.129.nupkg to the local-nuget/ folder of this repository."
+            exit 1
+          fi
+          ls -la local-nuget
           python3 - <<'PY'
-          import re
-          p = 'nuget.config'
+          import os
+          p = 'work/melonx/nuget.config'
           s = open(p, encoding='utf-8-sig').read()
-          s = s.replace('<packageSource key="nuget.org">\n            <package pattern="*" />',
-                        '<packageSource key="nuget.org">\n            <package pattern="*" />\n            <package pattern="Ryujinx.LibHac" />', 1)
-          assert 'pattern="Ryujinx.LibHac" />\n        </packageSource>\n        <packageSource key="LibHacAlpha">' in s or s.count('Ryujinx.LibHac') >= 2
+          local = os.path.abspath('local-nuget')
+          s = s.replace('<add key="LibHacAlpha"', '<add key="LocalPackages" value="%s" />\n        <add key="LibHacAlpha"' % local, 1)
+          s = s.replace('<packageSource key="LibHacAlpha">',
+                        '<packageSource key="LocalPackages">\n            <package pattern="Ryujinx.LibHac" />\n        </packageSource>\n        <packageSource key="LibHacAlpha">', 1)
           open(p, 'w', encoding='utf-8').write(s)
           PY
-          grep -n "LibHac" nuget.config
-          curl -s -m 30 https://api.nuget.org/v3-flatcontainer/ryujinx.libhac/index.json -o "$RUNNER_TEMP/libhac.json" || true
-          echo "::notice::nuget.org Ryujinx.LibHac 0.21 versions: $(jq -r '.versions[]' "$RUNNER_TEMP/libhac.json" 2>/dev/null | grep '^0.21' | tr '\n' ' ')"
-
-      - name: Probe Forgejo feeds for Ryujinx.LibHac
-        continue-on-error: true
-        run: |
-          for owner in Ryulynx projects Ryujinx MeloNX Stossy11 ryubing; do
-            url="https://starforgejo.dev/api/packages/$owner/nuget/query?q=LibHac&prerelease=true&take=20"
-            code="$(curl -s -m 30 -o q.json -w '%{http_code}' "$url" || true)"
-            hits="$(jq -c '[.data[]? | {id, v: .version}]' q.json 2>/dev/null | head -c 500)"
-            echo "::notice::feed $owner http=$code hits=$hits"
-          done
-          for url in "https://git.ryujinx.app/api/v4/projects/1/packages/nuget/index.json" "https://git.ryujinx.app/api/v4/packages/nuget/index.json"; do
-            code="$(curl -s -m 30 -o /dev/null -w '%{http_code}' "$url" || true)"
-            echo "::notice::ryubing gitlab $url http=$code"
-          done
+          cat work/melonx/nuget.config
 
       - name: Build Ryujinx.Library (NativeAOT, ios-arm64)
         working-directory: work/melonx
