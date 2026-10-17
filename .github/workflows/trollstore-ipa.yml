@@ -7,6 +7,11 @@ run-name: TrollStore IPA (${{ github.ref_name }})
 
 on:
   workflow_dispatch:
+    inputs:
+      moltenvk:
+        description: "Replace the IPA's libMoltenVK.dylib with this KhronosGroup release (only 1.4.2 is pinned by hash); empty keeps the one in the IPA"
+        required: false
+        default: ""
   push:
     branches:
       - memory-trim
@@ -193,6 +198,41 @@ jobs:
             echo "::warning::Patch marker string not found in the rebuilt dylib"
           fi
 
+      - name: Swap in a newer MoltenVK (optional)
+        if: ${{ inputs.moltenvk != '' }}
+        env:
+          MVK_VERSION: ${{ inputs.moltenvk }}
+        run: |
+          set -euo pipefail
+          if [ "$MVK_VERSION" != "1.4.2" ]; then
+            echo "::error::Only MoltenVK 1.4.2 is pinned by hash in this workflow" >&2
+            exit 1
+          fi
+          tar_sha="b5d947b1660e6e9fed40b9cd2387e160aaab9e80b775c0cef7e14059405178c1"
+          bin_sha="6cd5888490d08b36356d04c50c05e2eda5b9bcb3d0338ece693a28987de96aff"
+          mkdir -p mvk
+          curl -sSL --fail -o mvk/ios.tar "https://github.com/KhronosGroup/MoltenVK/releases/download/v${MVK_VERSION}/MoltenVK-ios.tar"
+          test "$(shasum -a 256 mvk/ios.tar | awk '{print $1}')" = "$tar_sha"
+          tar -xf mvk/ios.tar -C mvk "MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework/MoltenVK"
+          new="mvk/MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework/MoltenVK"
+          test "$(shasum -a 256 "$new" | awk '{print $1}')" = "$bin_sha"
+          old="ipa/Payload/MeloNX.app/Frameworks/libMoltenVK.dylib"
+          test -f "$old"
+          lipo -info "$new"
+          oldid="$(otool -D "$old" | tail -n 1)"
+          nm -gU "$old" | awk '{print $3}' | sort -u > mvk-old.syms
+          nm -gU "$new" | awk '{print $3}' | sort -u > mvk-new.syms
+          missing="$(comm -23 mvk-old.syms mvk-new.syms || true)"
+          if [ -n "$missing" ]; then
+            echo "The new MoltenVK is missing exports the old one had:" >&2
+            echo "$missing" | head -30 >&2
+            exit 1
+          fi
+          cp "$new" "$old"
+          install_name_tool -id "$oldid" "$old"
+          ls -la "$old"
+          echo "MVK_SUFFIX=-mvk${MVK_VERSION}" >> "$GITHUB_ENV"
+
       - name: Strip old signatures and fake-sign for TrollStore
         run: |
           set -euo pipefail
@@ -255,6 +295,6 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: MeloNX-2.7-memory-trim-trollstore-ipa
+          name: MeloNX-2.7-memory-trim-trollstore-ipa${{ env.MVK_SUFFIX }}
           path: out/MeloNX-2.7-memory-trim-trollstore.ipa
           if-no-files-found: error
