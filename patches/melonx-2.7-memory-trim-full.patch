@@ -1,6 +1,6 @@
 diff -ruN a/src/Ryujinx.Audio/Renderer/Server/AudioRendererManager.cs b/src/Ryujinx.Audio/Renderer/Server/AudioRendererManager.cs
 --- a/src/Ryujinx.Audio/Renderer/Server/AudioRendererManager.cs	2026-10-16 23:33:24.275023016 -0500
-+++ b/src/Ryujinx.Audio/Renderer/Server/AudioRendererManager.cs	2026-10-17 07:14:55.242949268 -0500
++++ b/src/Ryujinx.Audio/Renderer/Server/AudioRendererManager.cs	2026-10-17 07:28:33.617286473 -0500
 @@ -323,6 +323,8 @@
              // before the audio renderer was fully disposed.
              Memory<byte> workBufferMemory = GC.AllocateArray<byte>((int)workBufferSize, pinned: true);
@@ -12,7 +12,7 @@ diff -ruN a/src/Ryujinx.Audio/Renderer/Server/AudioRendererManager.cs b/src/Ryuj
                  processHandle,
 diff -ruN a/src/Ryujinx.Common/Logging/LargeAllocationLog.cs b/src/Ryujinx.Common/Logging/LargeAllocationLog.cs
 --- a/src/Ryujinx.Common/Logging/LargeAllocationLog.cs	1969-12-31 19:00:00.000000000 -0500
-+++ b/src/Ryujinx.Common/Logging/LargeAllocationLog.cs	2026-10-17 07:14:55.259744754 -0500
++++ b/src/Ryujinx.Common/Logging/LargeAllocationLog.cs	2026-10-17 07:28:33.657719651 -0500
 @@ -0,0 +1,45 @@
 +using System.Diagnostics;
 +using System.Text;
@@ -61,7 +61,7 @@ diff -ruN a/src/Ryujinx.Common/Logging/LargeAllocationLog.cs b/src/Ryujinx.Commo
 +}
 diff -ruN a/src/Ryujinx.Common/Memory/MemoryOwner.cs b/src/Ryujinx.Common/Memory/MemoryOwner.cs
 --- a/src/Ryujinx.Common/Memory/MemoryOwner.cs	2026-10-16 23:33:24.362565964 -0500
-+++ b/src/Ryujinx.Common/Memory/MemoryOwner.cs	2026-10-17 07:14:55.261522494 -0500
++++ b/src/Ryujinx.Common/Memory/MemoryOwner.cs	2026-10-17 07:28:33.662169174 -0500
 @@ -6,6 +6,7 @@
  using System.Runtime.CompilerServices;
  using System.Runtime.InteropServices;
@@ -200,7 +200,7 @@ diff -ruN a/src/Ryujinx.Common/Memory/MemoryOwner.cs b/src/Ryujinx.Common/Memory
  
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs b/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs
 --- a/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs	2026-10-16 23:33:24.412706065 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs	2026-10-17 07:14:55.364009593 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs	2026-10-17 07:28:33.829545614 -0500
 @@ -1,3 +1,4 @@
 +using Ryujinx.Common.Logging;
  using Ryujinx.Common;
@@ -216,7 +216,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs b/src/Ryujinx.Graphi
                  TextureParams srcParams = new(srcRegionX, srcRegionY, srcBaseOffset, srcBpp, srcLinear, srcCalculator);
 diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/GpuContext.cs
 --- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-16 23:33:24.420198945 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-17 07:14:55.385018282 -0500
++++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-17 07:28:33.877287720 -0500
 @@ -1,6 +1,7 @@
  using Ryujinx.Common;
  using Ryujinx.Common.Configuration;
@@ -649,7 +649,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
          }
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs
 --- a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-16 23:33:24.420402759 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-17 07:14:55.377284260 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs	2026-10-17 07:28:33.861967765 -0500
 @@ -241,6 +241,16 @@
          private const ulong TrimFloorDivisor = 8;
  
@@ -669,7 +669,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/AutoDeleteCache.cs b/src/Ryujinx.Grap
          /// </summary>
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs
 --- a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-16 23:33:24.421694249 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-17 07:14:55.381266549 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/Texture.cs	2026-10-17 07:28:33.867391087 -0500
 @@ -170,6 +170,78 @@
          public ulong CacheSize { get; set; }
  
@@ -751,7 +751,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/Texture.cs b/src/Ryujinx.Graphics.Gpu
          public ulong GetEstimatedHostSize()
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs
 --- a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-16 23:33:24.422476805 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-17 07:14:55.381778873 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs	2026-10-17 07:28:33.869483583 -0500
 @@ -492,6 +492,8 @@
                      state.CachedSampler?.IsDisposed != true)
                  {
@@ -772,7 +772,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureBindingsManager.cs b/src/Ryuji
                      if (isStore)
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs
 --- a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-16 23:33:24.422581848 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-17 07:14:55.381939623 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs	2026-10-17 07:28:33.869793736 -0500
 @@ -1,4 +1,5 @@
  using Ryujinx.Common;
 +using Ryujinx.Common.Logging;
@@ -961,7 +961,50 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs b/src/Ryujinx.Graphic
              if (partiallyMapped)
              {
                  lock (_partiallyMappedTextures)
-@@ -1472,4 +1636,16 @@
+@@ -1289,6 +1453,17 @@
+         /// <param name="caps">GPU capabilities</param>
+         /// <param name="scale">Texture scale factor, to be applied to the texture size</param>
+         /// <returns>The texture creation information</returns>
++        private const int OversizedCubemapMipDrop = 2;
++
++        private static bool IsOversizedHdrCubemap(TextureInfo info, FormatInfo hostFormat)
++        {
++            return (info.Target == Target.Cubemap || info.Target == Target.CubemapArray) &&
++                   info.Width >= 2048 &&
++                   info.Levels > OversizedCubemapMipDrop &&
++                   (info.FormatInfo.Format == Format.Bc6HUfloat || info.FormatInfo.Format == Format.Bc6HSfloat) &&
++                   hostFormat.Format != info.FormatInfo.Format;
++        }
++
+         public static TextureCreateInfo GetCreateInfo(TextureInfo info, Capabilities caps, float scale)
+         {
+             FormatInfo formatInfo = TextureCompatibility.ToHostCompatibleFormat(info, caps);
+@@ -1331,11 +1506,23 @@
+                 height = (int)MathF.Ceiling(height * scale);
+             }
+ 
++            int levels = info.Levels;
++
++            if (IsOversizedHdrCubemap(info, formatInfo))
++            {
++                // A 2048x2048 BC6H cubemap that the GPU cannot use compressed becomes a 128 MiB host texture, and the
++                // GPU address fault that kills MeloNX on iOS follows its creation every time. Keep the two largest
++                // mip levels guest side only: the host cubemap starts at 512x512, and the upload skips the top levels.
++                width = Math.Max(1, width >> OversizedCubemapMipDrop);
++                height = Math.Max(1, height >> OversizedCubemapMipDrop);
++                levels = Math.Max(1, levels - OversizedCubemapMipDrop);
++            }
++
+             return new TextureCreateInfo(
+                 width,
+                 height,
+                 depth,
+-                info.Levels,
++                levels,
+                 info.Samples,
+                 formatInfo.BlockWidth,
+                 formatInfo.BlockHeight,
+@@ -1472,4 +1659,16 @@
              }
          }
      }
@@ -980,7 +1023,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TextureCache.cs b/src/Ryujinx.Graphic
  }
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs
 --- a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-16 23:33:24.423777935 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-17 07:14:55.384038765 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs	2026-10-17 07:28:33.874634099 -0500
 @@ -183,6 +183,12 @@
  
              ref readonly TextureDescriptor descriptor = ref GetDescriptorRef(id);
@@ -1007,7 +1050,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Image/TexturePool.cs b/src/Ryujinx.Graphics
                  DescriptorCache[id] = descriptor;
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs
 --- a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-16 23:33:24.424782832 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-17 07:14:55.385554734 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs	2026-10-17 07:28:33.880018197 -0500
 @@ -172,6 +172,11 @@
          private const ulong TrimFloorDivisor = 8;
  
@@ -1022,7 +1065,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/BufferCache.cs b/src/Ryujinx.Graphic
          /// </summary>
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/MemoryManager.cs b/src/Ryujinx.Graphics.Gpu/Memory/MemoryManager.cs
 --- a/src/Ryujinx.Graphics.Gpu/Memory/MemoryManager.cs	2026-10-16 23:33:24.425957348 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Memory/MemoryManager.cs	2026-10-17 07:14:55.386239778 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Memory/MemoryManager.cs	2026-10-17 07:28:33.886280644 -0500
 @@ -1,3 +1,4 @@
 +using Ryujinx.Common.Logging;
  using Ryujinx.Common.Memory;
@@ -1054,7 +1097,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/MemoryManager.cs b/src/Ryujinx.Graph
                  ReadImpl(va, data, tracked);
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/PhysicalMemory.cs b/src/Ryujinx.Graphics.Gpu/Memory/PhysicalMemory.cs
 --- a/src/Ryujinx.Graphics.Gpu/Memory/PhysicalMemory.cs	2026-10-16 23:33:24.426240044 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/Memory/PhysicalMemory.cs	2026-10-17 07:14:55.386337203 -0500
++++ b/src/Ryujinx.Graphics.Gpu/Memory/PhysicalMemory.cs	2026-10-17 07:28:33.887624518 -0500
 @@ -1,3 +1,4 @@
 +using Ryujinx.Common.Logging;
  using Ryujinx.Common.Memory;
@@ -1070,7 +1113,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/PhysicalMemory.cs b/src/Ryujinx.Grap
              int offset = 0;
 diff -ruN a/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs b/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs
 --- a/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs	2026-10-16 23:33:24.481276989 -0500
-+++ b/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs	2026-10-17 07:14:55.409828897 -0500
++++ b/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs	2026-10-17 07:28:34.055515965 -0500
 @@ -1,3 +1,4 @@
 +using Ryujinx.Common.Logging;
  using Ryujinx.Common.Memory;
@@ -1086,7 +1129,7 @@ diff -ruN a/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs b/src/Ryujinx.Graph
              AstcDecoder decoder = new(data, output, blockWidth, blockHeight, width, height, depth, levels, layers);
 diff -ruN a/src/Ryujinx.Graphics.Texture/LayoutConverter.cs b/src/Ryujinx.Graphics.Texture/LayoutConverter.cs
 --- a/src/Ryujinx.Graphics.Texture/LayoutConverter.cs	2026-10-16 23:33:24.484123748 -0500
-+++ b/src/Ryujinx.Graphics.Texture/LayoutConverter.cs	2026-10-17 07:14:55.410520870 -0500
++++ b/src/Ryujinx.Graphics.Texture/LayoutConverter.cs	2026-10-17 07:28:34.067456441 -0500
 @@ -1,3 +1,4 @@
 +using Ryujinx.Common.Logging;
  using Ryujinx.Common;
@@ -1102,7 +1145,7 @@ diff -ruN a/src/Ryujinx.Graphics.Texture/LayoutConverter.cs b/src/Ryujinx.Graphi
  
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/BufferHolder.cs b/src/Ryujinx.Graphics.Vulkan/BufferHolder.cs
 --- a/src/Ryujinx.Graphics.Vulkan/BufferHolder.cs	2026-10-16 23:33:24.495611844 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/BufferHolder.cs	2026-10-17 07:14:55.414689094 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/BufferHolder.cs	2026-10-17 07:28:34.097956620 -0500
 @@ -1,3 +1,4 @@
 +using Ryujinx.Common.Logging;
  using Ryujinx.Graphics.GAL;
@@ -1118,7 +1161,7 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/BufferHolder.cs b/src/Ryujinx.Graphics.V
                  }
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs b/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs
 --- a/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs	2026-10-16 23:33:24.508082699 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs	2026-10-17 07:14:55.422894007 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs	2026-10-17 07:28:34.134743030 -0500
 @@ -25,8 +25,10 @@
  
              vkGetMoltenVKConfigurationMVK(nint.Zero, out MVKConfiguration config, configSize);
@@ -1134,25 +1177,44 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs b/src/Ryuj
              config.SemaphoreSupportStyle = MVKVkSemaphoreSupportStyle.MVK_CONFIG_VK_SEMAPHORE_SUPPORT_STYLE_SINGLE_QUEUE;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vulkan/TextureView.cs
 --- a/src/Ryujinx.Graphics.Vulkan/TextureView.cs	2026-10-16 23:33:24.519261659 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/TextureView.cs	2026-10-17 07:14:55.429928516 -0500
-@@ -751,10 +751,49 @@
++++ b/src/Ryujinx.Graphics.Vulkan/TextureView.cs	2026-10-17 07:28:34.174102396 -0500
+@@ -751,10 +751,68 @@
          /// <inheritdoc/>
          public void SetData(MemoryOwner<byte> data)
          {
 -            SetData(data.Span, 0, 0, Info.GetLayers(), Info.Levels, singleSlice: false);
 +            int layerCount = Info.GetLayers();
 +
++            // A cubemap created smaller than its guest data (the top mip levels are dropped, see TextureCache) receives
++            // the full decoded chain. The dropped levels come first, so only the tail is uploaded.
++            ReadOnlySpan<byte> fullData = data.Span;
++
++            if (Info.Target is Target.Cubemap or Target.CubemapArray)
++            {
++                long expected = 0;
++
++                for (int mip = 0; mip < Info.Levels; mip++)
++                {
++                    expected += (long)Info.GetMipSize2D(mip) * layerCount;
++                }
++
++                if (expected > 0 && fullData.Length > expected)
++                {
++                    fullData = fullData[(int)(fullData.Length - expected)..];
++                }
++            }
++
 +            // A huge texture (for example a 2048x2048 HDR cubemap with a full mip chain) used to be uploaded through one
 +            // staging buffer as large as the whole texture, on top of the texture itself. On iOS that peak has been
 +            // followed by GPU address faults. Upload one level/layer slice at a time instead, so the staging buffers stay
 +            // small and are released as the upload goes. The buffer layout is level major with every layer of a level
 +            // stored together, which is what the single copy below reads.
-+            if (data.Length >= ChunkedUploadThreshold &&
++            if (fullData.Length >= ChunkedUploadThreshold &&
 +                Info.Target != Target.Texture3D &&
 +                !NeedsD24S8Conversion() &&
 +                Info.Levels * layerCount > 1)
 +            {
-+                ReadOnlySpan<byte> span = data.Span;
++                ReadOnlySpan<byte> span = fullData;
 +                int offset = 0;
 +
 +                for (int level = 0; level < Info.Levels; level++)
@@ -1177,7 +1239,7 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vu
 +                return;
 +            }
 +
-+            SetData(data.Span, 0, 0, layerCount, Info.Levels, singleSlice: false);
++            SetData(fullData, 0, 0, layerCount, Info.Levels, singleSlice: false);
              data.Dispose();
          }
  
@@ -1188,7 +1250,7 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vu
          {
 diff -ruN a/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs b/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs
 --- a/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs	2026-10-16 23:33:24.673416221 -0500
-+++ b/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs	2026-10-17 07:14:55.466873247 -0500
++++ b/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs	2026-10-17 07:28:34.622372453 -0500
 @@ -1,3 +1,4 @@
 +using Ryujinx.Common.Logging;
  using LibHac.Fs;
@@ -1205,7 +1267,7 @@ diff -ruN a/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs b/src/Ryujinx.H
  
 diff -ruN a/src/Ryujinx.HLE/Loaders/Executables/NsoExecutable.cs b/src/Ryujinx.HLE/Loaders/Executables/NsoExecutable.cs
 --- a/src/Ryujinx.HLE/Loaders/Executables/NsoExecutable.cs	2026-10-16 23:33:24.673502481 -0500
-+++ b/src/Ryujinx.HLE/Loaders/Executables/NsoExecutable.cs	2026-10-17 07:14:55.466893664 -0500
++++ b/src/Ryujinx.HLE/Loaders/Executables/NsoExecutable.cs	2026-10-17 07:28:34.622728306 -0500
 @@ -45,6 +45,8 @@
  
              Program = new byte[DataOffset + uncompressedSize];
@@ -1217,7 +1279,7 @@ diff -ruN a/src/Ryujinx.HLE/Loaders/Executables/NsoExecutable.cs b/src/Ryujinx.H
              DataSize = DecompressSection(reader, NsoReader.SegmentType.Data, DataOffset);
 diff -ruN a/src/Ryujinx.HLE/Switch.cs b/src/Ryujinx.HLE/Switch.cs
 --- a/src/Ryujinx.HLE/Switch.cs	2026-10-16 23:33:24.672187921 -0500
-+++ b/src/Ryujinx.HLE/Switch.cs	2026-10-17 07:14:55.466506724 -0500
++++ b/src/Ryujinx.HLE/Switch.cs	2026-10-17 07:28:34.618467631 -0500
 @@ -131,6 +131,8 @@
                  Gpu.TrimCaches(pressure);
              }
@@ -1229,7 +1291,7 @@ diff -ruN a/src/Ryujinx.HLE/Switch.cs b/src/Ryujinx.HLE/Switch.cs
              Gpu.GPFifo.DispatchCalls();
 diff -ruN a/src/Ryujinx.Memory/HostMemoryBudget.cs b/src/Ryujinx.Memory/HostMemoryBudget.cs
 --- a/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-16 23:33:24.742872663 -0500
-+++ b/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-17 07:14:55.500194462 -0500
++++ b/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-17 07:28:34.799244132 -0500
 @@ -77,6 +77,42 @@
          }
  
