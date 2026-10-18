@@ -1187,6 +1187,86 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/BufferManager.cs b/src/Ryujinx.Graphics.
              if (forConditionalRendering && gd.Capabilities.SupportsConditionalRendering)
              {
                  usage |= BufferUsageFlags.ConditionalRenderingBitExt;
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs
+--- a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-16 23:33:24.509953232 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-18 06:32:44.351527642 -0500
+@@ -412,6 +412,8 @@
+                 }
+                 else if (result.IsError)
+                 {
++                    program.DumpFailedPipeline(result.ToString());
++
+                     if (cachePipelineFailure)
+                     {
+                         program.AddComputePipeline(ref SpecializationData, null);
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/Shader.cs b/src/Ryujinx.Graphics.Vulkan/Shader.cs
+--- a/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-16 23:33:24.511604063 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-18 06:32:44.347914313 -0500
+@@ -30,6 +30,9 @@
+ 
+         public ShaderStageFlags StageFlags => _stage;
+ 
++        // Kept for diagnostics when the host fails to build a pipeline from this shader.
++        public byte[] Spirv { get; private set; }
++
+         public ProgramLinkStatus CompileStatus
+         {
+             get => (ProgramLinkStatus)Volatile.Read(ref _compileStatus);
+@@ -89,6 +92,8 @@
+                     }
+                 }
+ 
++                Spirv = spirv;
++
+                 fixed (byte* pCode = spirv)
+                 {
+                     ShaderModuleCreateInfo shaderModuleCreateInfo = new()
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs b/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs
+--- a/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs	2026-10-16 23:33:24.511755244 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs	2026-10-18 06:32:44.349154685 -0500
+@@ -12,6 +12,42 @@
+ {
+     class ShaderCollection : IProgram
+     {
++        private int _failureDumped;
++
++        internal void DumpFailedPipeline(string reason)
++        {
++            if (System.Threading.Interlocked.Exchange(ref _failureDumped, 1) != 0)
++            {
++                return;
++            }
++
++            try
++            {
++                string dir = System.IO.Path.Combine(Ryujinx.Common.Configuration.AppDataManager.BaseDirPath, "shader_fail");
++                System.IO.Directory.CreateDirectory(dir);
++
++                if (System.IO.Directory.GetFiles(dir).Length > 60)
++                {
++                    return;
++                }
++
++                string id = Environment.TickCount64.ToString("x");
++
++                foreach (Shader shader in _shaders)
++                {
++                    if (shader.Spirv != null)
++                    {
++                        string name = $"{id}_{shader.StageFlags}.spv";
++                        System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, name), shader.Spirv);
++                        Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu, $"Pipeline creation failed ({reason}); dumped {name} ({shader.Spirv.Length} bytes) to shader_fail");
++                    }
++                }
++            }
++            catch (Exception)
++            {
++            }
++        }
++
+         private readonly PipelineShaderStageCreateInfo[] _infos;
+         private readonly Shader[] _shaders;
+         private readonly Task[] _shaderCompileTasks;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vulkan/TextureView.cs
 --- a/src/Ryujinx.Graphics.Vulkan/TextureView.cs	2026-10-16 23:33:24.519261659 -0500
 +++ b/src/Ryujinx.Graphics.Vulkan/TextureView.cs	2026-10-17 11:34:24.887582853 -0500
