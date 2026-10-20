@@ -1187,6 +1187,163 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/BufferManager.cs b/src/Ryujinx.Graphics.
              if (forConditionalRendering && gd.Capabilities.SupportsConditionalRendering)
              {
                  usage |= BufferUsageFlags.ConditionalRenderingBitExt;
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/CommandBufferPool.cs b/src/Ryujinx.Graphics.Vulkan/CommandBufferPool.cs
+--- a/src/Ryujinx.Graphics.Vulkan/CommandBufferPool.cs	2026-10-16 23:33:24.496691148 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/CommandBufferPool.cs	2026-10-19 21:36:59.396280863 -0500
+@@ -1,3 +1,4 @@
++using Ryujinx.Common.Logging;
+ using Silk.NET.Vulkan;
+ using System;
+ using System.Collections.Generic;
+@@ -16,6 +17,7 @@
+ 
+         private readonly Vk _api;
+         private readonly Device _device;
++        private static int _debugSubmitSeq;
+         private readonly Queue _queue;
+         private readonly Lock _queueLock;
+         private readonly bool _concurrentFenceWaitUnsupported;
+@@ -311,6 +313,7 @@
+ 
+                         lock (_queueLock)
+                         {
++                            Logger.Info?.Print(LogClass.Gpu, $"[Submit] #{++_debugSubmitSeq} draws so far {PipelineBase.DebugDrawTotal}");
+                             _api.QueueSubmit(_queue, 1, in sInfo, entry.Fence.GetUnsafe()).ThrowOnError();
+                         }
+                     }
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/IndexBufferState.cs b/src/Ryujinx.Graphics.Vulkan/IndexBufferState.cs
+--- a/src/Ryujinx.Graphics.Vulkan/IndexBufferState.cs	2026-10-16 23:33:24.506956289 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/IndexBufferState.cs	2026-10-19 21:36:59.394085063 -0500
+@@ -13,6 +13,10 @@
+         private readonly int _size;
+         private readonly IndexType _type;
+ 
++        internal readonly int DebugSize => _size;
++        internal readonly int DebugIndexBytes => _type == IndexType.Uint32 ? 4 : _type == IndexType.Uint16 ? 2 : 1;
++        internal readonly bool DebugHasBuffer => _handle != BufferHandle.Null || _buffer != null;
++
+         private readonly BufferHandle _handle;
+         private Auto<DisposableBuffer> _buffer;
+ 
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineBase.cs b/src/Ryujinx.Graphics.Vulkan/PipelineBase.cs
+--- a/src/Ryujinx.Graphics.Vulkan/PipelineBase.cs	2026-10-16 23:33:24.508700954 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/PipelineBase.cs	2026-10-19 21:36:59.388549408 -0500
+@@ -1,3 +1,4 @@
++using Ryujinx.Common.Logging;
+ using Ryujinx.Common.Memory;
+ using Ryujinx.Graphics.GAL;
+ using Ryujinx.Graphics.Shader;
+@@ -318,6 +319,94 @@
+             Gd.Api.CmdDispatchIndirect(CommandBuffer, indirectBuffer.Get(Cbs, indirectBufferOffset, 12).Value, (ulong)indirectBufferOffset);
+         }
+ 
++        internal static long DebugDrawTotal;
++        private static int _debugRangeLogs;
++
++        private void DebugCheckDrawRanges(bool indexed, int count, int instanceCount, int first, int firstVertex, int firstInstance)
++        {
++            System.Threading.Interlocked.Increment(ref DebugDrawTotal);
++
++            if (_debugRangeLogs >= 150)
++            {
++                return;
++            }
++
++            try
++            {
++                uint attrCount = _newState.VertexAttributeDescriptionsCount;
++                uint bindCount = _newState.VertexBindingDescriptionsCount;
++
++                for (int i = 0; i < _vertexBuffers.Length; i++)
++                {
++                    ref VertexBufferState vb = ref _vertexBuffers[i];
++
++                    if (!vb.DebugHasBuffer || vb.DebugStride <= 0 || vb.DescriptorIndex >= bindCount)
++                    {
++                        continue;
++                    }
++
++                    VertexInputBindingDescription desc = _newState.Internal.VertexBindingDescriptions[vb.DescriptorIndex];
++                    bool used = false;
++
++                    for (int a = 0; a < attrCount; a++)
++                    {
++                        if (_newState.Internal.VertexAttributeDescriptions[a].Binding == desc.Binding)
++                        {
++                            used = true;
++                            break;
++                        }
++                    }
++
++                    if (!used)
++                    {
++                        continue;
++                    }
++
++                    long elements;
++
++                    if (desc.InputRate == VertexInputRate.Instance)
++                    {
++                        elements = (long)firstInstance + instanceCount;
++                    }
++                    else if (!indexed)
++                    {
++                        elements = (long)firstVertex + count;
++                    }
++                    else
++                    {
++                        continue;
++                    }
++
++                    long needed = elements * vb.DebugStride;
++
++                    if (needed > vb.DebugSize)
++                    {
++                        _debugRangeLogs++;
++                        Logger.Warning?.Print(LogClass.Gpu, $"[DrawCheck] draw #{DebugDrawTotal} {(indexed ? "indexed" : "plain")} vertex binding {desc.Binding} ({desc.InputRate}) needs {needed} bytes but bound size is {vb.DebugSize} (stride {vb.DebugStride}, count {count}, firstVertex {firstVertex}, instances {instanceCount})");
++                    }
++                }
++
++                if (indexed && _indexBufferPattern == null && _indexBuffer.DebugHasBuffer)
++                {
++                    long neededIdx = ((long)first + count) * _indexBuffer.DebugIndexBytes;
++
++                    if (neededIdx > _indexBuffer.DebugSize)
++                    {
++                        _debugRangeLogs++;
++                        Logger.Warning?.Print(LogClass.Gpu, $"[DrawCheck] draw #{DebugDrawTotal} index buffer needs {neededIdx} bytes but bound size is {_indexBuffer.DebugSize} (count {count}, firstIndex {first})");
++                    }
++                }
++                else if (indexed && !_indexBuffer.DebugHasBuffer && _indexBufferPattern == null)
++                {
++                    _debugRangeLogs++;
++                    Logger.Warning?.Print(LogClass.Gpu, $"[DrawCheck] draw #{DebugDrawTotal} indexed draw with no index buffer bound");
++                }
++            }
++            catch (Exception)
++            {
++            }
++        }
++
+         public void Draw(int vertexCount, int instanceCount, int firstVertex, int firstInstance)
+         {
+             if (vertexCount == 0)
+@@ -332,6 +421,7 @@
+ 
+             BeginRenderPass();
+             DrawCount++;
++            DebugCheckDrawRanges(false, vertexCount, instanceCount, 0, firstVertex, firstInstance);
+ 
+             if (Gd.TopologyUnsupported(_topology))
+             {
+@@ -402,6 +492,7 @@
+ 
+             BeginRenderPass();
+             DrawCount++;
++            DebugCheckDrawRanges(true, indexCount, instanceCount, firstIndex, firstVertex, firstInstance);
+ 
+             if (_indexBufferPattern != null)
+             {
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs
 --- a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-16 23:33:24.509953232 -0500
 +++ b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-18 06:32:44.351527642 -0500
@@ -1340,6 +1497,20 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vu
          /// <inheritdoc/>
          public void SetData(MemoryOwner<byte> data, int layer, int level)
          {
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs b/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs
+--- a/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs	2026-10-16 23:33:24.519508398 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs	2026-10-19 21:36:59.392008692 -0500
+@@ -101,6 +101,10 @@
+             }
+         }
+ 
++        internal readonly int DebugSize => _size;
++        internal readonly int DebugStride => _stride;
++        internal readonly bool DebugHasBuffer => _buffer != null || _handle != BufferHandle.Null;
++
+         public readonly bool BoundEquals(Auto<DisposableBuffer> buffer)
+         {
+             return _buffer == buffer;
 diff -ruN a/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs b/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs
 --- a/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs	2026-10-16 23:33:24.673416221 -0500
 +++ b/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs	2026-10-17 11:34:24.993484965 -0500
