@@ -1459,8 +1459,24 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/CommandBufferPool.cs b/src/Ryujinx.Graph
                      }
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/ImageArray.cs b/src/Ryujinx.Graphics.Vulkan/ImageArray.cs
 --- a/src/Ryujinx.Graphics.Vulkan/ImageArray.cs	2026-10-16 23:33:24.506742336 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/ImageArray.cs	2026-10-24 13:18:45.224415593 -0500
-@@ -63,6 +63,13 @@
++++ b/src/Ryujinx.Graphics.Vulkan/ImageArray.cs	2026-10-24 16:05:06.860854759 -0500
+@@ -59,19 +59,38 @@
+ 
+                 if (image is TextureBuffer textureBuffer)
+                 {
++                    if (_bufferTextureRefs == null)
++                    {
++                        // Regular image array given a texture buffer: nothing to bind here.
++                        if (_textureRefs != null)
++                        {
++                            _textureRefs[index + i].Storage = null;
++                            _textureRefs[index + i].View = default;
++                        }
++
++                        continue;
++                    }
++
+                     _bufferTextureRefs[index + i] = textureBuffer;
                  }
                  else if (image is TextureView view)
                  {
@@ -1474,7 +1490,18 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/ImageArray.cs b/src/Ryujinx.Graphics.Vul
                      _textureRefs[index + i].Storage = view.Storage;
                      _textureRefs[index + i].View = view;
                  }
-@@ -89,6 +96,11 @@
+-                else if (!_isBuffer)
++                else if (_textureRefs != null)
+                 {
+                     _textureRefs[index + i].Storage = null;
+                     _textureRefs[index + i].View = default;
+                 }
+-                else
++                else if (_bufferTextureRefs != null)
+                 {
+                     _bufferTextureRefs[index + i] = null;
+                 }
+@@ -89,6 +108,11 @@
  
          public void QueueWriteToReadBarriers(CommandBufferScoped cbs, PipelineStageFlags stageFlags)
          {
@@ -1944,7 +1971,7 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs b/src/Ryujinx.Graph
              return _buffer == buffer;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 16:00:23.117177593 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 16:05:06.862994580 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
