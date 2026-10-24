@@ -1346,7 +1346,7 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineBase.cs b/src/Ryujinx.Graphics.V
              {
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs
 --- a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-16 23:33:24.509953232 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-18 06:32:44.351527642 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-24 04:16:12.545863892 -0500
 @@ -412,6 +412,8 @@
                  }
                  else if (result.IsError)
@@ -1356,6 +1356,33 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs b/src/Ryujinx.Graphics.
                      if (cachePipelineFailure)
                      {
                          program.AddComputePipeline(ref SpecializationData, null);
+@@ -710,6 +712,8 @@
+                     RenderPass = renderPass,
+                 };
+ 
++                int dbgSeq = program.DebugPipelineBegin();
++
+                 Result result;
+ 
+                 if (gd.PipelineCacheManager.IsMainCache(cache))
+@@ -745,6 +749,8 @@
+                     result = gd.Api.CreateGraphicsPipelines(device, cache, 1, &pipelineCreateInfo, null, &pipelineHandle);
+                 }
+ 
++                program.DebugPipelineEnd(dbgSeq, result);
++
+                 while (blendEnables != 0)
+                 {
+                     int i = BitOperations.TrailingZeroCount(blendEnables);
+@@ -763,6 +769,8 @@
+                 }
+                 else if (result.IsError)
+                 {
++                    program.DumpFailedPipeline(result.ToString());
++
+                     if (cachePipelineFailure)
+                     {
+                         program.AddGraphicsPipeline(ref Internal, null);
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/Shader.cs b/src/Ryujinx.Graphics.Vulkan/Shader.cs
 --- a/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-16 23:33:24.511604063 -0500
 +++ b/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-18 06:32:44.347914313 -0500
@@ -1380,11 +1407,49 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/Shader.cs b/src/Ryujinx.Graphics.Vulkan/
                      ShaderModuleCreateInfo shaderModuleCreateInfo = new()
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs b/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs
 --- a/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs	2026-10-16 23:33:24.511755244 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs	2026-10-18 06:32:44.349154685 -0500
-@@ -12,6 +12,42 @@
++++ b/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs	2026-10-24 04:16:12.548016526 -0500
+@@ -12,6 +12,80 @@
  {
      class ShaderCollection : IProgram
      {
++
++        private static int _debugPipelineSeq;
++
++        internal int DebugPipelineBegin()
++        {
++            int seq = System.Threading.Interlocked.Increment(ref _debugPipelineSeq);
++
++            try
++            {
++                int slot = seq % 16;
++                string dir = System.IO.Path.Combine(Ryujinx.Common.Configuration.AppDataManager.BaseDirPath, "shader_last");
++                System.IO.Directory.CreateDirectory(dir);
++
++                string info = "";
++
++                foreach (Shader shader in _shaders)
++                {
++                    if (shader.Spirv != null)
++                    {
++                        System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, $"slot{slot:00}_{shader.StageFlags}.spv"), shader.Spirv);
++                        info += $" {shader.StageFlags}={shader.Spirv.Length}";
++                    }
++                }
++
++                Ryujinx.Common.Logging.Logger.Info?.Print(Ryujinx.Common.Logging.LogClass.Gpu, $"[PipelineBegin] #{seq} slot{slot:00}{info}");
++            }
++            catch (Exception)
++            {
++            }
++
++            return seq;
++        }
++
++        internal void DebugPipelineEnd(int seq, Result result)
++        {
++            Ryujinx.Common.Logging.Logger.Info?.Print(Ryujinx.Common.Logging.LogClass.Gpu, $"[PipelineEnd] #{seq} {result}");
++        }
++
 +        private int _failureDumped;
 +
 +        internal void DumpFailedPipeline(string reason)
