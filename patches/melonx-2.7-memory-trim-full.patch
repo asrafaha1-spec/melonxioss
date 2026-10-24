@@ -1725,6 +1725,23 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs b/src/Ryujinx.Graphi
          private readonly PipelineShaderStageCreateInfo[] _infos;
          private readonly Shader[] _shaders;
          private readonly Task[] _shaderCompileTasks;
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureArray.cs b/src/Ryujinx.Graphics.Vulkan/TextureArray.cs
+--- a/src/Ryujinx.Graphics.Vulkan/TextureArray.cs	2026-10-16 23:33:24.518705928 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/TextureArray.cs	2026-10-24 13:00:55.634152309 -0500
+@@ -54,6 +54,13 @@
+ 
+         public void SetSamplers(int index, ISampler[] samplers)
+         {
++            if (_textureRefs == null)
++            {
++                // Texture buffer arrays have no samplers (only _bufferTextureRefs exists), so there
++                // is nothing to set. Dereferencing _textureRefs here crashed the app.
++                return;
++            }
++
+             for (int i = 0; i < samplers.Length; i++)
+             {
+                 try 
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vulkan/TextureView.cs
 --- a/src/Ryujinx.Graphics.Vulkan/TextureView.cs	2026-10-16 23:33:24.519261659 -0500
 +++ b/src/Ryujinx.Graphics.Vulkan/TextureView.cs	2026-10-17 11:34:24.887582853 -0500
@@ -1814,12 +1831,12 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs b/src/Ryujinx.Graph
              return _buffer == buffer;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 12:31:13.319575624 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 13:00:55.638305105 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
              Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
-+            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-7 (translate_last.txt trace)");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-8 (TextureArray buffer sampler crash fix)");
          }
  
          public void Initialize(GraphicsDebugLevel logLevel)
