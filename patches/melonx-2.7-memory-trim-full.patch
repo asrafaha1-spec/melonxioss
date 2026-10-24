@@ -198,6 +198,36 @@ diff -ruN a/src/Ryujinx.Common/Memory/MemoryOwner.cs b/src/Ryujinx.Common/Memory
          private readonly int _length;
          private T[]? _array;
  
+diff -ruN a/src/Ryujinx.Graphics.GAL/Multithreading/CommandHelper.cs b/src/Ryujinx.Graphics.GAL/Multithreading/CommandHelper.cs
+--- a/src/Ryujinx.Graphics.GAL/Multithreading/CommandHelper.cs	2026-10-16 23:33:24.397913613 -0500
++++ b/src/Ryujinx.Graphics.GAL/Multithreading/CommandHelper.cs	2026-10-24 16:00:23.110871508 -0500
+@@ -156,14 +156,23 @@
+             return maxCommandSize;
+         }
+ 
++        private static int _swallowedCount;
++
+         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+         public static void RunCommand(Span<byte> memory, ThreadedRenderer threaded, IRenderer renderer)
+         {
+-            try 
++            try
+             {
+                 _lookup[memory[^1]](memory, threaded, renderer);
+-            } 
+-            catch {}
++            }
++            catch (Exception e)
++            {
++                // Previously swallowed silently; log the first few so crashes can be traced.
++                if (System.Threading.Interlocked.Increment(ref _swallowedCount) <= 60)
++                {
++                    Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu, $"[GAL] command {(CommandType)memory[^1]} threw and was skipped: {e}");
++                }
++            }
+         }
+     }
+ }
 diff -ruN a/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs b/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs
 --- a/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs	2026-10-16 23:33:24.412706065 -0500
 +++ b/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs	2026-10-17 11:34:24.798715121 -0500
@@ -1427,6 +1457,35 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/CommandBufferPool.cs b/src/Ryujinx.Graph
                              _api.QueueSubmit(_queue, 1, in sInfo, entry.Fence.GetUnsafe()).ThrowOnError();
                          }
                      }
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/ImageArray.cs b/src/Ryujinx.Graphics.Vulkan/ImageArray.cs
+--- a/src/Ryujinx.Graphics.Vulkan/ImageArray.cs	2026-10-16 23:33:24.506742336 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/ImageArray.cs	2026-10-24 13:18:45.224415593 -0500
+@@ -63,6 +63,13 @@
+                 }
+                 else if (image is TextureView view)
+                 {
++                    if (_textureRefs == null)
++                    {
++                        _bufferTextureRefs[index + i] = null;
++
++                        continue;
++                    }
++
+                     _textureRefs[index + i].Storage = view.Storage;
+                     _textureRefs[index + i].View = view;
+                 }
+@@ -89,6 +96,11 @@
+ 
+         public void QueueWriteToReadBarriers(CommandBufferScoped cbs, PipelineStageFlags stageFlags)
+         {
++            if (_textureRefs == null)
++            {
++                return;
++            }
++
+             HashSet<TextureStorage> storages = _storages;
+ 
+             if (storages == null)
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/IndexBufferState.cs b/src/Ryujinx.Graphics.Vulkan/IndexBufferState.cs
 --- a/src/Ryujinx.Graphics.Vulkan/IndexBufferState.cs	2026-10-16 23:33:24.506956289 -0500
 +++ b/src/Ryujinx.Graphics.Vulkan/IndexBufferState.cs	2026-10-19 21:36:59.394085063 -0500
@@ -1727,7 +1786,7 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs b/src/Ryujinx.Graphi
          private readonly Task[] _shaderCompileTasks;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureArray.cs b/src/Ryujinx.Graphics.Vulkan/TextureArray.cs
 --- a/src/Ryujinx.Graphics.Vulkan/TextureArray.cs	2026-10-16 23:33:24.518705928 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/TextureArray.cs	2026-10-24 13:00:55.634152309 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/TextureArray.cs	2026-10-24 16:00:23.114513393 -0500
 @@ -54,6 +54,13 @@
  
          public void SetSamplers(int index, ISampler[] samplers)
@@ -1742,6 +1801,60 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureArray.cs b/src/Ryujinx.Graphics.V
              for (int i = 0; i < samplers.Length; i++)
              {
                  try 
+@@ -86,19 +93,39 @@
+ 
+                 if (texture is TextureBuffer textureBuffer)
+                 {
++                    if (_bufferTextureRefs == null)
++                    {
++                        // Regular texture array given a texture buffer: nothing to bind here.
++                        if (_textureRefs != null)
++                        {
++                            _textureRefs[index + i].Storage = null;
++                            _textureRefs[index + i].View = default;
++                        }
++
++                        continue;
++                    }
++
+                     _bufferTextureRefs[index + i] = textureBuffer;
+                 }
+                 else if (texture is TextureView view)
+                 {
++                    if (_textureRefs == null)
++                    {
++                        // Texture buffer array: a regular texture view can't be bound here.
++                        _bufferTextureRefs[index + i] = null;
++
++                        continue;
++                    }
++
+                     _textureRefs[index + i].Storage = view.Storage;
+                     _textureRefs[index + i].View = view.GetImageView();
+                 }
+-                else if (!_isBuffer)
++                else if (_textureRefs != null)
+                 {
+                     _textureRefs[index + i].Storage = null;
+                     _textureRefs[index + i].View = default;
+                 }
+-                else
++                else if (_bufferTextureRefs != null)
+                 {
+                     _bufferTextureRefs[index + i] = null;
+                 }
+@@ -116,6 +143,11 @@
+ 
+         public void QueueWriteToReadBarriers(CommandBufferScoped cbs, PipelineStageFlags stageFlags)
+         {
++            if (_textureRefs == null)
++            {
++                return;
++            }
++
+             HashSet<TextureStorage> storages = _storages;
+ 
+             if (storages == null)
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vulkan/TextureView.cs
 --- a/src/Ryujinx.Graphics.Vulkan/TextureView.cs	2026-10-16 23:33:24.519261659 -0500
 +++ b/src/Ryujinx.Graphics.Vulkan/TextureView.cs	2026-10-17 11:34:24.887582853 -0500
@@ -1831,12 +1944,12 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs b/src/Ryujinx.Graph
              return _buffer == buffer;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 13:00:55.638305105 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 16:00:23.117177593 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
              Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
-+            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-8 (TextureArray buffer sampler crash fix)");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-9 (TextureArray buffer-array null guards)");
          }
  
          public void Initialize(GraphicsDebugLevel logLevel)
