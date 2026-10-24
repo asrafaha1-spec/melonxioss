@@ -1111,6 +1111,107 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/PhysicalMemory.cs b/src/Ryujinx.Grap
              Span<byte> data = new byte[range.GetSize()];
  
              int offset = 0;
+diff -ruN a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs b/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs
+--- a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs	2026-10-16 23:33:24.480832534 -0500
++++ b/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs	2026-10-24 12:17:18.089581043 -0500
+@@ -9,6 +9,8 @@
+ using System;
+ using System.Collections.Generic;
+ using System.Numerics;
++using System.Runtime.ExceptionServices;
++using System.Threading;
+ using static Ryujinx.Graphics.Shader.IntermediateRepresentation.OperandHelper;
+ using static Ryujinx.Graphics.Shader.Translation.Translator;
+ 
+@@ -191,8 +193,50 @@
+             }
+         }
+ 
++        // Deep recursion in the translator passes can overflow the small default stack of
++        // secondary threads on iOS (killing the process without a log), so run on a large one.
++        private const int TranslateStackSize = 128 * 1024 * 1024;
++
++        private static T RunWithLargeStack<T>(Func<T> func)
++        {
++            T result = default;
++            ExceptionDispatchInfo error = null;
++
++            Thread thread = new(() =>
++            {
++                try
++                {
++                    result = func();
++                }
++                catch (Exception e)
++                {
++                    error = ExceptionDispatchInfo.Capture(e);
++                }
++            }, TranslateStackSize)
++            {
++                Name = "GPU.ShaderTranslate",
++            };
++
++            thread.Start();
++            thread.Join();
++
++            error?.Throw();
++
++            return result;
++        }
++
+         public ShaderProgram Translate(bool asCompute = false)
+         {
++            return RunWithLargeStack(() => TranslateImpl(asCompute));
++        }
++
++        public ShaderProgram Translate(TranslatorContext other, bool asCompute = false)
++        {
++            return RunWithLargeStack(() => TranslateImpl(other, asCompute));
++        }
++
++        private ShaderProgram TranslateImpl(bool asCompute)
++        {
+             ResourceManager resourceManager = CreateResourceManager(asCompute);
+ 
+             bool usesLocalMemory = _program.UsedFeatures.HasFlag(FeatureFlags.LocalMemory);
+@@ -211,7 +255,7 @@
+             return Translate(code, resourceManager, _program.UsedFeatures, _program.ClipDistancesWritten, asCompute);
+         }
+ 
+-        public ShaderProgram Translate(TranslatorContext other, bool asCompute = false)
++        private ShaderProgram TranslateImpl(TranslatorContext other, bool asCompute)
+         {
+             ResourceManager resourceManager = CreateResourceManager(asCompute);
+ 
+@@ -299,8 +343,10 @@
+                         Definitions.Stage,
+                         ref usedFeatures);
+ 
++                    GpuAccessor.Log($"[Translate] {Stage} fun{i}: optimizing {cfg.Blocks.Length} blocks");
+                     Optimizer.RunPass(context);
+                     TransformPasses.RunPass(context);
++                    GpuAccessor.Log($"[Translate] {Stage} fun{i}: passes done");
+                 }
+ 
+                 funcs[i] = new Function(cfg.Blocks, $"fun{i}", false, inArgumentsCount, outArgumentsCount);
+@@ -325,6 +371,8 @@
+             FeatureFlags usedFeatures,
+             byte clipDistancesWritten)
+         {
++            GpuAccessor.Log($"[Translate] {Stage}: structuring");
++
+             StructuredProgramInfo sInfo = StructuredProgram.MakeStructuredProgram(
+                 funcs,
+                 attributeUsage,
+@@ -369,6 +417,8 @@
+ 
+             CodeGenParameters parameters = new CodeGenParameters(attributeUsage, definitions, resourceManager.Properties, hostCapabilities, GpuAccessor, Options.TargetApi);
+ 
++            GpuAccessor.Log($"[Translate] {Stage}: generating code");
++
+             return Options.TargetLanguage switch
+             {
+                 TargetLanguage.Glsl => new ShaderProgram(info, TargetLanguage.Glsl, GlslGenerator.Generate(sInfo, parameters)),
 diff -ruN a/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs b/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs
 --- a/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs	2026-10-16 23:33:24.481276989 -0500
 +++ b/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs	2026-10-17 11:34:24.861093553 -0500
@@ -1598,12 +1699,12 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs b/src/Ryujinx.Graph
              return _buffer == buffer;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 12:01:31.344887103 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 12:17:18.092960264 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
              Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
-+            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-5 (oversized shader guard 256 KiB)");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-6 (large-stack shader translation, breadcrumbs)");
          }
  
          public void Initialize(GraphicsDebugLevel logLevel)
