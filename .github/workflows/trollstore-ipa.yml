@@ -144,9 +144,40 @@ jobs:
           set -euo pipefail
           dotnet --version
           dotnet publish src/Ryujinx.Library/Ryujinx.Library.csproj \
-            -c Release -r ios-arm64 \
+            -c Release -r ios-arm64 -p:StripSymbols=false \
             -p:XCodePath="$(xcode-select -p)/" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
           find src/Ryujinx.Library/bin -name 'Ryujinx.Library.dylib' -print
+
+      - name: Symbolicate crash offsets
+        working-directory: work/melonx
+        run: |
+          set -uo pipefail
+          dy="$(find src/Ryujinx.Library/bin -path '*native*' -name 'Ryujinx.Library.dylib' -type f -print -quit)"
+          ls -l "$dy"
+          xcrun size -m "$dy" | head -8 | while IFS= read -r l; do echo "::notice::$l"; done
+          xcrun nm -n "$dy" > "$GITHUB_WORKSPACE/syms.txt" 2>/dev/null || true
+          wc -l "$GITHUB_WORKSPACE/syms.txt"
+          python3 - <<'PY'
+          import bisect,os,subprocess,re
+          syms=[]
+          for l in open(os.environ["GITHUB_WORKSPACE"]+"/syms.txt",errors="ignore"):
+              p=l.split(None,2)
+              if len(p)==3 and re.fullmatch(r"[0-9a-fA-F]+",p[0]) and p[1] in "tTsS":
+                  syms.append((int(p[0],16),p[2].strip()))
+          syms.sort()
+          keys=[a for a,_ in syms]
+          print("symbols:",len(syms),"first:",hex(keys[0]) if keys else None)
+          for off in (7976480,5720660,5728312,11473692,13589780,13591204):
+              for base in (0,0x100000000):
+                  i=bisect.bisect_right(keys,base+off)-1
+                  if i>=0:
+                      a,n=syms[i]
+                      if base+off-a<0x20000:
+                          print(f"::notice::off {off} base {hex(base)} -> {n[:230]} +{base+off-a}")
+                          break
+              else:
+                  print(f"::notice::off {off} -> no symbol")
+          PY
 
       - name: Report build errors
         if: failure()
