@@ -1111,9 +1111,105 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/PhysicalMemory.cs b/src/Ryujinx.Grap
              Span<byte> data = new byte[range.GetSize()];
  
              int offset = 0;
+diff -ruN a/src/Ryujinx.Graphics.Shader/StructuredIr/GotoElimination.cs b/src/Ryujinx.Graphics.Shader/StructuredIr/GotoElimination.cs
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/GotoElimination.cs	2026-10-16 23:33:24.471330608 -0500
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/GotoElimination.cs	2026-10-24 12:31:13.308969213 -0500
+@@ -13,6 +13,8 @@
+         {
+             for (int index = gotos.Length - 1; index >= 0; index--)
+             {
++                Translation.TranslateTrace.Mark($"goto {index}/{gotos.Length}");
++
+                 GotoStatement stmt = gotos[index];
+ 
+                 AstBlock gBlock = ParentBlock(stmt.Goto);
+diff -ruN a/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs b/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs	2026-10-16 23:33:24.472554209 -0500
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs	2026-10-24 12:31:13.301122748 -0500
+@@ -68,10 +68,16 @@
+                     }
+                 }
+ 
++                Translation.TranslateTrace.Mark($"{function.Name}: operations built, {context.GetGotos().Length} gotos");
++
+                 GotoElimination.Eliminate(context.GetGotos());
+ 
++                Translation.TranslateTrace.Mark($"{function.Name}: gotos eliminated");
++
+                 AstOptimizer.Optimize(context);
+ 
++                Translation.TranslateTrace.Mark($"{function.Name}: ast optimized");
++
+                 context.LeaveFunction();
+             }
+ 
+diff -ruN a/src/Ryujinx.Graphics.Shader/Translation/TranslateTrace.cs b/src/Ryujinx.Graphics.Shader/Translation/TranslateTrace.cs
+--- a/src/Ryujinx.Graphics.Shader/Translation/TranslateTrace.cs	1969-12-31 19:00:00.000000000 -0500
++++ b/src/Ryujinx.Graphics.Shader/Translation/TranslateTrace.cs	2026-10-24 12:31:13.285810859 -0500
+@@ -0,0 +1,60 @@
++using System;
++using System.IO;
++using System.Threading;
++
++namespace Ryujinx.Graphics.Shader.Translation
++{
++    /// <summary>
++    /// Synchronous breadcrumbs for locating process-killing failures in the shader translator.
++    /// The asynchronous logger can lose its last lines when the process dies, so the last marker
++    /// is written straight to a file in the Documents folder.
++    /// </summary>
++    public static class TranslateTrace
++    {
++        private static readonly string _dir = ResolveDir();
++
++        private static string ResolveDir()
++        {
++            try
++            {
++                return Path.GetFullPath(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
++            }
++            catch (Exception)
++            {
++                return null;
++            }
++        }
++
++        public static void Mark(string text)
++        {
++            if (_dir == null)
++            {
++                return;
++            }
++
++            try
++            {
++                File.WriteAllText(Path.Combine(_dir, "translate_last.txt"), $"{DateTime.Now:HH:mm:ss.fff} T{Environment.CurrentManagedThreadId} {text}\n");
++            }
++            catch (Exception)
++            {
++            }
++        }
++
++        public static void Fail(string where, Exception e)
++        {
++            if (_dir == null)
++            {
++                return;
++            }
++
++            try
++            {
++                File.AppendAllText(Path.Combine(_dir, "translate_crash.txt"), $"{DateTime.Now:HH:mm:ss.fff} {where}: {e}\n\n");
++            }
++            catch (Exception)
++            {
++            }
++        }
++    }
++}
 diff -ruN a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs b/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs
 --- a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs	2026-10-16 23:33:24.480832534 -0500
-+++ b/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs	2026-10-24 12:17:18.089581043 -0500
++++ b/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs	2026-10-24 12:31:13.293423609 -0500
 @@ -9,6 +9,8 @@
  using System;
  using System.Collections.Generic;
@@ -1123,7 +1219,7 @@ diff -ruN a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs b/src/R
  using static Ryujinx.Graphics.Shader.IntermediateRepresentation.OperandHelper;
  using static Ryujinx.Graphics.Shader.Translation.Translator;
  
-@@ -191,8 +193,50 @@
+@@ -191,8 +193,66 @@
              }
          }
  
@@ -1161,12 +1257,28 @@ diff -ruN a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs b/src/R
 +
          public ShaderProgram Translate(bool asCompute = false)
          {
-+            return RunWithLargeStack(() => TranslateImpl(asCompute));
++            try
++            {
++                return RunWithLargeStack(() => TranslateImpl(asCompute));
++            }
++            catch (Exception e)
++            {
++                TranslateTrace.Fail($"{Stage} Translate", e);
++                throw;
++            }
 +        }
 +
 +        public ShaderProgram Translate(TranslatorContext other, bool asCompute = false)
 +        {
-+            return RunWithLargeStack(() => TranslateImpl(other, asCompute));
++            try
++            {
++                return RunWithLargeStack(() => TranslateImpl(other, asCompute));
++            }
++            catch (Exception e)
++            {
++                TranslateTrace.Fail($"{Stage} Translate(pair)", e);
++                throw;
++            }
 +        }
 +
 +        private ShaderProgram TranslateImpl(bool asCompute)
@@ -1174,7 +1286,7 @@ diff -ruN a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs b/src/R
              ResourceManager resourceManager = CreateResourceManager(asCompute);
  
              bool usesLocalMemory = _program.UsedFeatures.HasFlag(FeatureFlags.LocalMemory);
-@@ -211,7 +255,7 @@
+@@ -211,7 +271,7 @@
              return Translate(code, resourceManager, _program.UsedFeatures, _program.ClipDistancesWritten, asCompute);
          }
  
@@ -1183,10 +1295,11 @@ diff -ruN a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs b/src/R
          {
              ResourceManager resourceManager = CreateResourceManager(asCompute);
  
-@@ -299,8 +343,10 @@
+@@ -299,8 +359,11 @@
                          Definitions.Stage,
                          ref usedFeatures);
  
++                    TranslateTrace.Mark($"{Stage} fun{i}: optimizing {cfg.Blocks.Length} blocks");
 +                    GpuAccessor.Log($"[Translate] {Stage} fun{i}: optimizing {cfg.Blocks.Length} blocks");
                      Optimizer.RunPass(context);
                      TransformPasses.RunPass(context);
@@ -1194,19 +1307,21 @@ diff -ruN a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs b/src/R
                  }
  
                  funcs[i] = new Function(cfg.Blocks, $"fun{i}", false, inArgumentsCount, outArgumentsCount);
-@@ -325,6 +371,8 @@
+@@ -325,6 +388,9 @@
              FeatureFlags usedFeatures,
              byte clipDistancesWritten)
          {
++            TranslateTrace.Mark($"{Stage}: structuring");
 +            GpuAccessor.Log($"[Translate] {Stage}: structuring");
 +
              StructuredProgramInfo sInfo = StructuredProgram.MakeStructuredProgram(
                  funcs,
                  attributeUsage,
-@@ -369,6 +417,8 @@
+@@ -369,6 +435,9 @@
  
              CodeGenParameters parameters = new CodeGenParameters(attributeUsage, definitions, resourceManager.Properties, hostCapabilities, GpuAccessor, Options.TargetApi);
  
++            TranslateTrace.Mark($"{Stage}: generating code");
 +            GpuAccessor.Log($"[Translate] {Stage}: generating code");
 +
              return Options.TargetLanguage switch
@@ -1699,12 +1814,12 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs b/src/Ryujinx.Graph
              return _buffer == buffer;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 12:17:18.092960264 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 12:31:13.319575624 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
              Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
-+            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-6 (large-stack shader translation, breadcrumbs)");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-7 (translate_last.txt trace)");
          }
  
          public void Initialize(GraphicsDebugLevel logLevel)
