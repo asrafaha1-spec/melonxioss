@@ -1576,6 +1576,17 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs b/src/Ryujinx.Graph
          public readonly bool BoundEquals(Auto<DisposableBuffer> buffer)
          {
              return _buffer == buffer;
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
+--- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 09:30:04.219524384 -0500
+@@ -1004,6 +1004,7 @@
+             Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
+ 
+             Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-4 (pipeline markers, shader_last dump)");
+         }
+ 
+         public void Initialize(GraphicsDebugLevel logLevel)
 diff -ruN a/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs b/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs
 --- a/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs	2026-10-16 23:33:24.673416221 -0500
 +++ b/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs	2026-10-17 11:34:24.993484965 -0500
