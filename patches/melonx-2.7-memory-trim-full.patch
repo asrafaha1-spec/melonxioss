@@ -1385,8 +1385,16 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs b/src/Ryujinx.Graphics.
                          program.AddGraphicsPipeline(ref Internal, null);
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/Shader.cs b/src/Ryujinx.Graphics.Vulkan/Shader.cs
 --- a/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-16 23:33:24.511604063 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-18 06:32:44.347914313 -0500
-@@ -30,6 +30,9 @@
++++ b/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-24 12:01:31.342453905 -0500
+@@ -24,12 +24,17 @@
+         private readonly Device _device;
+         private readonly ShaderStageFlags _stage;
+ 
++        private const int MaxSpirvBytes = 256 * 1024;
++
+         private bool _disposed;
+         private int _compileStatus;
+         private ShaderModule _module;
  
          public ShaderStageFlags StageFlags => _stage;
  
@@ -1396,11 +1404,23 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/Shader.cs b/src/Ryujinx.Graphics.Vulkan/
          public ProgramLinkStatus CompileStatus
          {
              get => (ProgramLinkStatus)Volatile.Read(ref _compileStatus);
-@@ -89,6 +92,8 @@
+@@ -89,6 +94,20 @@
                      }
                  }
  
 +                Spirv = spirv;
++
++                if (spirv.Length > MaxSpirvBytes)
++                {
++                    // Metal's compiler stalls for ~20 seconds on shaders this large (thousands of
++                    // locals in one function) and then fails, freezing the app. Reject them up front
++                    // so the draws using them are skipped instead.
++                    Ryujinx.Common.Logging.Logger.Warning?.Print(Ryujinx.Common.Logging.LogClass.Gpu, $"Skipping oversized {_stage} shader ({spirv.Length} bytes of SPIR-V); the host compiler cannot build it.");
++
++                    CompileStatus = ProgramLinkStatus.Failure;
++
++                    return;
++                }
 +
                  fixed (byte* pCode = spirv)
                  {
@@ -1578,12 +1598,12 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/VertexBufferState.cs b/src/Ryujinx.Graph
              return _buffer == buffer;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 09:30:04.219524384 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 12:01:31.344887103 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
              Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
-+            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-4 (pipeline markers, shader_last dump)");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim debug-5 (oversized shader guard 256 KiB)");
          }
  
          public void Initialize(GraphicsDebugLevel logLevel)
