@@ -1141,6 +1141,31 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Memory/PhysicalMemory.cs b/src/Ryujinx.Grap
              Span<byte> data = new byte[range.GetSize()];
  
              int offset = 0;
+diff -ruN a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessElimination.cs b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessElimination.cs
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessElimination.cs	2026-10-16 23:33:24.476085619 -0500
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessElimination.cs	2026-10-25 12:41:28.822070105 -0500
+@@ -8,6 +8,8 @@
+ {
+     class BindlessElimination
+     {
++        private static int _failedLogCount;
++
+         public static void RunPass(BasicBlock block, ResourceManager resourceManager, IGpuAccessor gpuAccessor)
+         {
+             // We can turn a bindless into regular access by recognizing the pattern
+@@ -42,7 +44,11 @@
+                         ? texOp.Type.GetGlslImageTypeName(texOp.Format.GetComponentType())
+                         : texOp.Type.GlslTextureTypeName;
+ 
+-                    gpuAccessor.Log($"Failed to find handle source for bindless access of type \"{typeName}\".");
++                    // This repeats once per texture access (hundreds of identical lines), so only the first few are logged.
++                    if (System.Threading.Interlocked.Increment(ref _failedLogCount) <= 5)
++                    {
++                        gpuAccessor.Log($"Failed to find handle source for bindless access of type \"{typeName}\" (further occurrences are not logged).");
++                    }
+ 
+                     for (int destIndex = 0; destIndex < texOp.DestsCount; destIndex++)
+                     {
 diff -ruN a/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs b/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs
 --- a/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs	2026-10-16 23:33:24.481276989 -0500
 +++ b/src/Ryujinx.Graphics.Texture/Astc/AstcDecoder.cs	2026-10-17 11:34:24.861093553 -0500
@@ -1315,6 +1340,31 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/Shader.cs b/src/Ryujinx.Graphics.Vulkan/
                  fixed (byte* pCode = spirv)
                  {
                      ShaderModuleCreateInfo shaderModuleCreateInfo = new()
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs b/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs
+--- a/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs	2026-10-16 23:33:24.511755244 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/ShaderCollection.cs	2026-10-25 12:41:28.826230660 -0500
+@@ -12,6 +12,8 @@
+ {
+     class ShaderCollection : IProgram
+     {
++        private static int _missedLogCount;
++
+         private readonly PipelineShaderStageCreateInfo[] _infos;
+         private readonly Shader[] _shaders;
+         private readonly Task[] _shaderCompileTasks;
+@@ -1108,7 +1110,11 @@
+                 {
+                     if (!CompilesInBackground && _firstBackgroundUse)
+                     {
+-                        Logger.Warning?.Print(LogClass.Gpu, "Background pipeline compile missed on draw - incorrect pipeline state?");
++                        if (Interlocked.Increment(ref _missedLogCount) <= 10)
++                        {
++                            Logger.Warning?.Print(LogClass.Gpu, "Background pipeline compile missed on draw - incorrect pipeline state? (only the first few are logged)");
++                        }
++
+                         _firstBackgroundUse = false;
+                     }
+ 
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureArray.cs b/src/Ryujinx.Graphics.Vulkan/TextureArray.cs
 --- a/src/Ryujinx.Graphics.Vulkan/TextureArray.cs	2026-10-16 23:33:24.518705928 -0500
 +++ b/src/Ryujinx.Graphics.Vulkan/TextureArray.cs	2026-10-24 16:00:23.114513393 -0500
@@ -1461,15 +1511,56 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vu
          {
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-25 08:37:15.815511029 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-25 12:41:28.834923013 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
              Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
-+            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim RELEASE-2 (oversized shader limit raised to 1 MiB)");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim RELEASE-3 (quiet logs, 1 MiB shader limit)");
          }
  
          public void Initialize(GraphicsDebugLevel logLevel)
+diff -ruN a/src/Ryujinx.HLE/HOS/Services/Nv/NvDrvServices/NvHostCtrl/Types/NvHostEvent.cs b/src/Ryujinx.HLE/HOS/Services/Nv/NvDrvServices/NvHostCtrl/Types/NvHostEvent.cs
+--- a/src/Ryujinx.HLE/HOS/Services/Nv/NvDrvServices/NvHostCtrl/Types/NvHostEvent.cs	2026-10-16 23:33:24.627450977 -0500
++++ b/src/Ryujinx.HLE/HOS/Services/Nv/NvDrvServices/NvHostCtrl/Types/NvHostEvent.cs	2026-10-25 12:41:28.830527216 -0500
+@@ -12,6 +12,8 @@
+ {
+     class NvHostEvent
+     {
++        private static long _lastSlowLogTick;
++
+         public NvFence Fence;
+         public NvHostEventState State;
+         public KEvent Event;
+@@ -138,7 +140,15 @@
+                 //       This allows to keep GPU and CPU in sync when we are slow.
+                 if (_failingCount == FailingCountMax)
+                 {
+-                    Logger.Warning?.Print(LogClass.ServiceNv, "GPU processing thread is too slow, waiting on CPU...");
++                    // Can repeat many times per minute; log it at most once every 10 seconds.
++                    long now = Environment.TickCount64;
++
++                    if (now - _lastSlowLogTick >= 10000)
++                    {
++                        _lastSlowLogTick = now;
++
++                        Logger.Warning?.Print(LogClass.ServiceNv, "GPU processing thread is too slow, waiting on CPU... (logged at most every 10 s)");
++                    }
+ 
+                     Fence.Wait(gpuContext, Timeout.InfiniteTimeSpan);
+ 
+diff -ruN a/src/Ryujinx.HLE/HOS/Services/Sockets/Bsd/IClient.cs b/src/Ryujinx.HLE/HOS/Services/Sockets/Bsd/IClient.cs
+--- a/src/Ryujinx.HLE/HOS/Services/Sockets/Bsd/IClient.cs	2026-10-16 23:33:24.642865037 -0500
++++ b/src/Ryujinx.HLE/HOS/Services/Sockets/Bsd/IClient.cs	2026-10-25 12:41:28.719195522 -0500
+@@ -34,7 +34,7 @@
+         {
+             if (errorCode != LinuxError.SUCCESS)
+             {
+-                if (errorCode != LinuxError.EWOULDBLOCK)
++                if (errorCode != LinuxError.EWOULDBLOCK && errorCode != LinuxError.ETIMEDOUT)
+                 {
+                     Logger.Warning?.Print(LogClass.ServiceBsd, $"Operation failed with error {errorCode}.");
+                 }
 diff -ruN a/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs b/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs
 --- a/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs	2026-10-16 23:33:24.673416221 -0500
 +++ b/src/Ryujinx.HLE/Loaders/Executables/NroExecutable.cs	2026-10-17 11:34:24.993484965 -0500
@@ -1511,6 +1602,19 @@ diff -ruN a/src/Ryujinx.HLE/Switch.cs b/src/Ryujinx.HLE/Switch.cs
              Gpu.ProcessShaderCacheQueue();
              Gpu.Renderer.PreFrame();
              Gpu.GPFifo.DispatchCalls();
+diff -ruN a/src/Ryujinx.Library/Library.cs b/src/Ryujinx.Library/Library.cs
+--- a/src/Ryujinx.Library/Library.cs	2026-10-16 23:33:24.740211356 -0500
++++ b/src/Ryujinx.Library/Library.cs	2026-10-25 12:41:28.816480120 -0500
+@@ -923,7 +923,8 @@
+             EnsureKeyboardFallback();
+ 
+             Logger.SetEnable(LogLevel.Debug, option.LoggingEnableDebug);
+-            Logger.SetEnable(LogLevel.Stub, !option.LoggingDisableStub);
++            // Stub messages are pure noise (tens of thousands of lines per session), so they stay off.
++            Logger.SetEnable(LogLevel.Stub, false);
+             Logger.SetEnable(LogLevel.Info, !option.LoggingDisableInfo);
+             Logger.SetEnable(LogLevel.Warning, !option.LoggingDisableWarning);
+             Logger.SetEnable(LogLevel.Error, option.LoggingEnableError);
 diff -ruN a/src/Ryujinx.Memory/HostMemoryBudget.cs b/src/Ryujinx.Memory/HostMemoryBudget.cs
 --- a/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-16 23:33:24.742872663 -0500
 +++ b/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-17 11:34:25.050894757 -0500
