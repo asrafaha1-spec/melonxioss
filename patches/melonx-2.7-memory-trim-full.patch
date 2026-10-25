@@ -1275,12 +1275,12 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/ImageArray.cs b/src/Ryujinx.Graphics.Vul
              if (storages == null)
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/Shader.cs b/src/Ryujinx.Graphics.Vulkan/Shader.cs
 --- a/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-16 23:33:24.511604063 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-24 12:01:31.342453905 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-25 08:37:15.813029912 -0500
 @@ -24,12 +24,17 @@
          private readonly Device _device;
          private readonly ShaderStageFlags _stage;
  
-+        private const int MaxSpirvBytes = 256 * 1024;
++        private const int MaxSpirvBytes = 1024 * 1024;
 +
          private bool _disposed;
          private int _compileStatus;
@@ -1461,12 +1461,12 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vu
          {
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-24 16:41:20.310674069 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-25 08:37:15.815511029 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
              Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
-+            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim RELEASE-1 (no debug instrumentation)");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim RELEASE-2 (oversized shader limit raised to 1 MiB)");
          }
  
          public void Initialize(GraphicsDebugLevel logLevel)
