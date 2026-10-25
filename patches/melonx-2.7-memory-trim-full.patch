@@ -198,6 +198,119 @@ diff -ruN a/src/Ryujinx.Common/Memory/MemoryOwner.cs b/src/Ryujinx.Common/Memory
          private readonly int _length;
          private T[]? _array;
  
+diff -ruN a/src/Ryujinx.Common/PerfStats.cs b/src/Ryujinx.Common/PerfStats.cs
+--- a/src/Ryujinx.Common/PerfStats.cs	1969-12-31 19:00:00.000000000 -0500
++++ b/src/Ryujinx.Common/PerfStats.cs	2026-10-25 14:33:08.867292446 -0500
+@@ -0,0 +1,109 @@
++using System;
++using System.Diagnostics;
++using System.Threading;
++
++namespace Ryujinx.Common
++{
++    /// <summary>
++    /// Lightweight frame and stall counters, summarised in the periodic telemetry log line.
++    /// </summary>
++    public static class PerfStats
++    {
++        private static long _frames;
++        private static long _lastPresentTs;
++        private static long _intervalSumTicks;
++        private static long _intervalMaxTicks;
++        private static long _inPresentTicks;
++
++        private static long _pipelineCreates;
++        private static long _pipelineTicks;
++        private static long _pipelineMaxTicks;
++
++        private static long _snapshotTs = Stopwatch.GetTimestamp();
++        private static TimeSpan _snapshotGcPause = TimeSpan.Zero;
++        private static int _snapshotGen2;
++        private static int _snapshotGen0;
++
++        public static void FramePresented(long inPresentTicks)
++        {
++            long now = Stopwatch.GetTimestamp();
++            long last = Interlocked.Exchange(ref _lastPresentTs, now);
++
++            Interlocked.Increment(ref _frames);
++            Interlocked.Add(ref _inPresentTicks, inPresentTicks);
++
++            if (last != 0)
++            {
++                long interval = now - last;
++
++                Interlocked.Add(ref _intervalSumTicks, interval);
++
++                long max;
++
++                while (interval > (max = Interlocked.Read(ref _intervalMaxTicks)))
++                {
++                    if (Interlocked.CompareExchange(ref _intervalMaxTicks, interval, max) == max)
++                    {
++                        break;
++                    }
++                }
++            }
++        }
++
++        public static void PipelineCreated(long ticks)
++        {
++            Interlocked.Increment(ref _pipelineCreates);
++            Interlocked.Add(ref _pipelineTicks, ticks);
++
++            long max;
++
++            while (ticks > (max = Interlocked.Read(ref _pipelineMaxTicks)))
++            {
++                if (Interlocked.CompareExchange(ref _pipelineMaxTicks, ticks, max) == max)
++                {
++                    break;
++                }
++            }
++        }
++
++        private static double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
++
++        /// <summary>
++        /// Returns a one-line summary of everything since the previous call, and resets the counters.
++        /// </summary>
++        public static string TakeSummary()
++        {
++            long now = Stopwatch.GetTimestamp();
++            double seconds = (now - _snapshotTs) / (double)Stopwatch.Frequency;
++            _snapshotTs = now;
++
++            long frames = Interlocked.Exchange(ref _frames, 0);
++            long sum = Interlocked.Exchange(ref _intervalSumTicks, 0);
++            long max = Interlocked.Exchange(ref _intervalMaxTicks, 0);
++            long inPresent = Interlocked.Exchange(ref _inPresentTicks, 0);
++            long creates = Interlocked.Exchange(ref _pipelineCreates, 0);
++            long pTicks = Interlocked.Exchange(ref _pipelineTicks, 0);
++            long pMax = Interlocked.Exchange(ref _pipelineMaxTicks, 0);
++
++            TimeSpan gcPause = GC.GetTotalPauseDuration();
++            int gen2 = GC.CollectionCount(2);
++            int gen0 = GC.CollectionCount(0);
++
++            double gcMs = (gcPause - _snapshotGcPause).TotalMilliseconds;
++            int gen2Delta = gen2 - _snapshotGen2;
++            int gen0Delta = gen0 - _snapshotGen0;
++
++            _snapshotGcPause = gcPause;
++            _snapshotGen2 = gen2;
++            _snapshotGen0 = gen0;
++
++            double fps = seconds > 0 ? frames / seconds : 0;
++            double avg = frames > 1 ? Ms(sum) / (frames - 1) : 0;
++            double presentAvg = frames > 0 ? Ms(inPresent) / frames : 0;
++
++            return $"Perf: {fps:0.0} fps ({frames} frames in {seconds:0.0} s), frame interval avg {avg:0} ms max {Ms(max):0} ms, " +
++                   $"time inside present avg {presentAvg:0} ms, pipeline builds {creates} (total {Ms(pTicks):0} ms, longest {Ms(pMax):0} ms), " +
++                   $"GC pause {gcMs:0} ms (gen0 +{gen0Delta}, gen2 +{gen2Delta})";
++        }
++    }
++}
 diff -ruN a/src/Ryujinx.Graphics.GAL/Multithreading/CommandHelper.cs b/src/Ryujinx.Graphics.GAL/Multithreading/CommandHelper.cs
 --- a/src/Ryujinx.Graphics.GAL/Multithreading/CommandHelper.cs	2026-10-16 23:33:24.397913613 -0500
 +++ b/src/Ryujinx.Graphics.GAL/Multithreading/CommandHelper.cs	2026-10-24 16:00:23.110871508 -0500
@@ -246,7 +359,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/Engine/Dma/DmaClass.cs b/src/Ryujinx.Graphi
                  TextureParams srcParams = new(srcRegionX, srcRegionY, srcBaseOffset, srcBpp, srcLinear, srcCalculator);
 diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/GpuContext.cs
 --- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-16 23:33:24.420198945 -0500
-+++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-17 11:34:24.813140158 -0500
++++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs	2026-10-25 14:33:08.998448093 -0500
 @@ -1,6 +1,7 @@
  using Ryujinx.Common;
  using Ryujinx.Common.Configuration;
@@ -350,7 +463,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
          /// <param name="level">How much the host wants back</param>
          public void TrimCaches(MemoryPressureLevel level)
          {
-@@ -356,9 +437,267 @@
+@@ -356,9 +437,269 @@
                  return;
              }
  
@@ -547,6 +660,8 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
 +                $"textures: cache {textures.CacheBytes / TrimMiB} MiB ({textures.CacheCount}), " +
 +                $"pools {textures.PoolBytes / TrimMiB} MiB ({textures.PoolCount}), " +
 +                $"tracked {textures.TotalCount} | buffers {bufferBytes / TrimMiB} MiB" + GetProcessBreakdown());
++
++            Logger.Info?.Print(LogClass.Gpu, Ryujinx.Common.PerfStats.TakeSummary());
 +        }
 +
 +        private bool DetectSceneChange(long now, ulong footprint, out ulong newBytes)
@@ -619,7 +734,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
              {
                  if (available >= ComfortableHeadroomBytes)
                  {
-@@ -383,14 +722,42 @@
+@@ -383,14 +724,42 @@
  
              _lastTrimTimestamp = now;
  
@@ -663,7 +778,7 @@ diff -ruN a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/Gp
              if (evicted == 0)
              {
                  Logger.Debug?.Print(LogClass.Gpu,
-@@ -401,6 +768,13 @@
+@@ -401,6 +770,13 @@
  
              string headroom = available != 0 ? $", {available / TrimMiB} MiB available" : string.Empty;
  
@@ -1298,6 +1413,27 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/ImageArray.cs b/src/Ryujinx.Graphics.Vul
              HashSet<TextureStorage> storages = _storages;
  
              if (storages == null)
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs
+--- a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-16 23:33:24.509953232 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-25 14:33:09.018587105 -0500
+@@ -710,6 +710,8 @@
+                     RenderPass = renderPass,
+                 };
+ 
++                long perfStart = System.Diagnostics.Stopwatch.GetTimestamp();
++
+                 Result result;
+ 
+                 if (gd.PipelineCacheManager.IsMainCache(cache))
+@@ -745,6 +747,8 @@
+                     result = gd.Api.CreateGraphicsPipelines(device, cache, 1, &pipelineCreateInfo, null, &pipelineHandle);
+                 }
+ 
++                Ryujinx.Common.PerfStats.PipelineCreated(System.Diagnostics.Stopwatch.GetTimestamp() - perfStart);
++
+                 while (blendEnables != 0)
+                 {
+                     int i = BitOperations.TrailingZeroCount(blendEnables);
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/Shader.cs b/src/Ryujinx.Graphics.Vulkan/Shader.cs
 --- a/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-16 23:33:24.511604063 -0500
 +++ b/src/Ryujinx.Graphics.Vulkan/Shader.cs	2026-10-25 08:37:15.813029912 -0500
@@ -1511,15 +1647,41 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vu
          {
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-25 12:41:28.834923013 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-25 14:33:09.026928121 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
              Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
-+            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim RELEASE-3 (quiet logs, 1 MiB shader limit)");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim RELEASE-4 (perf line in telemetry)");
          }
  
          public void Initialize(GraphicsDebugLevel logLevel)
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/Window.cs b/src/Ryujinx.Graphics.Vulkan/Window.cs
+--- a/src/Ryujinx.Graphics.Vulkan/Window.cs	2026-10-16 23:33:24.520696832 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/Window.cs	2026-10-25 14:33:09.009080690 -0500
+@@ -311,7 +311,21 @@
+             return new Extent2D(width, height);
+         }
+ 
+-        public unsafe override void Present(ITexture texture, ImageCrop crop, Action swapBuffersCallback)
++        public override void Present(ITexture texture, ImageCrop crop, Action swapBuffersCallback)
++        {
++            long start = System.Diagnostics.Stopwatch.GetTimestamp();
++
++            try
++            {
++                PresentInner(texture, crop, swapBuffersCallback);
++            }
++            finally
++            {
++                Ryujinx.Common.PerfStats.FramePresented(System.Diagnostics.Stopwatch.GetTimestamp() - start);
++            }
++        }
++
++        private unsafe void PresentInner(ITexture texture, ImageCrop crop, Action swapBuffersCallback)
+         {
+             TextureView view = (TextureView)texture;
+ 
 diff -ruN a/src/Ryujinx.HLE/HOS/Services/Nv/NvDrvServices/NvHostCtrl/Types/NvHostEvent.cs b/src/Ryujinx.HLE/HOS/Services/Nv/NvDrvServices/NvHostCtrl/Types/NvHostEvent.cs
 --- a/src/Ryujinx.HLE/HOS/Services/Nv/NvDrvServices/NvHostCtrl/Types/NvHostEvent.cs	2026-10-16 23:33:24.627450977 -0500
 +++ b/src/Ryujinx.HLE/HOS/Services/Nv/NvDrvServices/NvHostCtrl/Types/NvHostEvent.cs	2026-10-25 12:41:28.830527216 -0500
