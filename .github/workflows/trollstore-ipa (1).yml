@@ -1,0 +1,309 @@
+name: TrollStore IPA (2.7 + memory trim)
+run-name: TrollStore IPA (${{ github.ref_name }})
+
+# Builds only the emulator core (Ryujinx.Library.dylib, NativeAOT, ios-arm64) from the MeloNX 2.7 source with
+# patches/melonx-2.7-memory-trim-full.patch applied, drops it into the MeloNX.ipa already in this repository,
+# strips the old developer signatures and fake-signs every binary with ldid so TrollStore can install it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      moltenvk:
+        description: "Replace the IPA's libMoltenVK.dylib with this KhronosGroup release (only 1.4.2 is pinned by hash); empty keeps the one in the IPA"
+        required: false
+        default: ""
+  push:
+    branches:
+      - memory-trim
+    paths:
+      - ".github/workflows/trollstore-ipa.yml"
+      - "patches/**"
+      - "MeloNX.ipa"
+      - "MeloNX-2.7.zip"
+      - "local-nuget/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trollstore-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build TrollStore IPA
+    runs-on: macos-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Select newest Xcode
+        run: |
+          set -euo pipefail
+          selected_xcode="$(find /Applications -maxdepth 1 -name 'Xcode*.app' -print | sort -V | tail -n 1)"
+          if [ -z "$selected_xcode" ]; then
+            echo "No Xcode installation found" >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$selected_xcode/Contents/Developer"
+          xcodebuild -version
+
+      - name: Extract and patch the 2.7 source
+        run: |
+          set -euo pipefail
+          test "$(stat -f%z MeloNX-2.7.zip)" -gt 1000000 || { echo "MeloNX-2.7.zip is still an LFS pointer" >&2; exit 1; }
+          mkdir -p work
+          unzip -q MeloNX-2.7.zip -d work
+          cd work/melonx
+          patch -p1 --dry-run < "$GITHUB_WORKSPACE/patches/melonx-2.7-memory-trim-full.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/patches/melonx-2.7-memory-trim-full.patch"
+          # Saves the main Vulkan pipeline cache when the app is paused or backgrounded, so it survives a kill.
+          patch -p1 --dry-run < "$GITHUB_WORKSPACE/patches/pipeline-cache-checkpoint.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/patches/pipeline-cache-checkpoint.patch"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: work/melonx/global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-trollstore-${{ hashFiles('work/melonx/Directory.Packages.props', 'work/melonx/nuget.config') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-trollstore-
+
+      - name: Install .NET iOS workload
+        continue-on-error: true
+        run: dotnet workload install ios
+
+      - name: Get Ryujinx.LibHac (local-nuget/ first, else two public mirrors that must agree)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The feed in nuget.config no longer serves Ryujinx.LibHac. A package placed in local-nuget/ wins.
+          # Otherwise it is downloaded from two independent public mirrors of the original feed, and the build
+          # only continues if both files are byte-identical.
+          mkdir -p local-nuget
+          if ! ls local-nuget/Ryujinx.LibHac.*.nupkg >/dev/null 2>&1; then
+            rm -rf mirror
+            n=0
+            for repo in GRID0-net/GRID0-ryujinx NextendoNetwork/Ryujinx-Nextendo; do
+              d="mirror/$n"
+              mkdir -p "$d"
+              assets="$(gh release view build-deps -R "$repo" --json assets -q '.assets[].name' 2>&1 | tr '\n' ' ' || true)"
+              echo "::notice::$repo build-deps assets: $assets"
+              err="$(gh release download build-deps -R "$repo" -p '*libhac*.nupkg' -D "$d" 2>&1 || true)"
+              [ -z "$err" ] || echo "::warning::$repo download: ${err:0:300}"
+              n=$((n + 1))
+            done
+            files="$(find mirror -iname '*libhac*.nupkg' -type f | sort)"
+            count="$(echo "$files" | grep -c . || true)"
+            if [ "$count" -lt 2 ]; then
+              echo "::error::Only $count mirror copies of Ryujinx.LibHac found; need 2 to cross-check. Add the package to local-nuget/ instead."
+              exit 1
+            fi
+            hashes="$(echo "$files" | while read -r f; do shasum -a 256 "$f" | awk '{print $1}'; done | sort -u)"
+            names="$(echo "$files" | while read -r f; do basename "$f"; done | sort -u)"
+            echo "sha256: $hashes"
+            echo "name: $names"
+            if [ "$(echo "$hashes" | wc -l | tr -d ' ')" != "1" ] || [ "$(echo "$names" | wc -l | tr -d ' ')" != "1" ]; then
+              echo "::error::The two mirror copies of Ryujinx.LibHac differ. Not using them."
+              exit 1
+            fi
+            src="$(echo "$files" | head -n 1)"
+            lower="$(basename "$src" .nupkg | tr 'A-Z' 'a-z')"
+            cp "$src" "local-nuget/Ryujinx.LibHac.${lower#ryujinx.libhac.}.nupkg"
+            echo "::notice::Ryujinx.LibHac from mirrors: $names sha256=$hashes"
+          fi
+          ls -la local-nuget
+
+          pkg="$(ls local-nuget/Ryujinx.LibHac.*.nupkg | head -n 1)"
+          ver="$(basename "$pkg" .nupkg | sed 's/^Ryujinx\.LibHac\.//')"
+          echo "Using Ryujinx.LibHac $ver"
+          sed -i '' "s|<PackageVersion Include=\"Ryujinx.LibHac\" Version=\"[^\"]*\"|<PackageVersion Include=\"Ryujinx.LibHac\" Version=\"$ver\"|" work/melonx/Directory.Packages.props
+          grep -n "Ryujinx.LibHac" work/melonx/Directory.Packages.props
+          python3 - <<'PY'
+          import os
+          p = 'work/melonx/nuget.config'
+          s = open(p, encoding='utf-8-sig').read()
+          local = os.path.abspath('local-nuget')
+          s = s.replace('<add key="LibHacAlpha"', '<add key="LocalPackages" value="%s" />\n        <add key="LibHacAlpha"' % local, 1)
+          s = s.replace('<packageSource key="LibHacAlpha">',
+                        '<packageSource key="LocalPackages">\n            <package pattern="Ryujinx.LibHac" />\n        </packageSource>\n        <packageSource key="LibHacAlpha">', 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          PY
+          cat work/melonx/nuget.config
+
+      - name: Build Ryujinx.Library (NativeAOT, ios-arm64)
+        working-directory: work/melonx
+        run: |
+          set -euo pipefail
+          dotnet --version
+          dotnet publish src/Ryujinx.Library/Ryujinx.Library.csproj \
+            -c Release -r ios-arm64 \
+            -p:XCodePath="$(xcode-select -p)/" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          find src/Ryujinx.Library/bin -name 'Ryujinx.Library.dylib' -print
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          if [ -f build.log ]; then
+            grep -E "error|Error" build.log | sort -u | head -15 | while IFS= read -r l; do echo "::error::${l:0:500}"; done
+            echo "::error::LOG TAIL: $(tail -n 30 build.log | tr '\n' '|' | cut -c1-3500)"
+          fi
+
+      - name: Unpack the base IPA
+        run: |
+          set -euo pipefail
+          rm -rf ipa
+          mkdir ipa
+          unzip -q MeloNX.ipa -d ipa
+          test -d ipa/Payload/MeloNX.app
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ipa/Payload/MeloNX.app/Info.plist
+
+      - name: Swap in the rebuilt core
+        run: |
+          set -euo pipefail
+          old="ipa/Payload/MeloNX.app/Frameworks/Ryujinx.Library.dylib"
+          new="$(find work/melonx/src/Ryujinx.Library/bin -path '*native*' -name 'Ryujinx.Library.dylib' -type f -print -quit)"
+          test -f "$old"
+          test -f "$new"
+
+          lipo -info "$new"
+          oldid="$(otool -D "$old" | tail -n 1)"
+          echo "Original install name: $oldid"
+
+          # Every symbol the shipped app can import must still be exported by the new build.
+          nm -gU "$old" | awk '{print $3}' | sort -u > old.syms
+          nm -gU "$new" | awk '{print $3}' | sort -u > new.syms
+          missing="$(comm -23 old.syms new.syms || true)"
+          if [ -n "$missing" ]; then
+            echo "The rebuilt dylib is missing exports the app needs:" >&2
+            echo "$missing" | head -50 >&2
+            exit 1
+          fi
+
+          cp "$new" "$old"
+          install_name_tool -id "$oldid" "$old"
+          ls -la "$old"
+
+          # Soft check that the patched code is in the binary (NativeAOT stores literals as UTF-16).
+          if python3 -c "import sys; sys.exit(0 if ' idle pool textures'.encode('utf-16-le') in open(sys.argv[1],'rb').read() else 1)" "$old"; then
+            echo "Patch marker found in the rebuilt dylib"
+          else
+            echo "::warning::Patch marker string not found in the rebuilt dylib"
+          fi
+
+          if python3 -c "import sys; sys.exit(0 if 'pipeline cache checkpoint failed'.encode('utf-16-le') in open(sys.argv[1],'rb').read() else 1)" "$old"; then
+            echo "Checkpoint patch marker found in the rebuilt dylib"
+          else
+            echo "::warning::Checkpoint patch marker string not found in the rebuilt dylib"
+          fi
+
+      - name: Swap in a newer MoltenVK (optional)
+        if: ${{ inputs.moltenvk != '' }}
+        env:
+          MVK_VERSION: ${{ inputs.moltenvk }}
+        run: |
+          set -euo pipefail
+          if [ "$MVK_VERSION" != "1.4.2" ]; then
+            echo "::error::Only MoltenVK 1.4.2 is pinned by hash in this workflow" >&2
+            exit 1
+          fi
+          tar_sha="b5d947b1660e6e9fed40b9cd2387e160aaab9e80b775c0cef7e14059405178c1"
+          bin_sha="6cd5888490d08b36356d04c50c05e2eda5b9bcb3d0338ece693a28987de96aff"
+          mkdir -p mvk
+          curl -sSL --fail -o mvk/ios.tar "https://github.com/KhronosGroup/MoltenVK/releases/download/v${MVK_VERSION}/MoltenVK-ios.tar"
+          test "$(shasum -a 256 mvk/ios.tar | awk '{print $1}')" = "$tar_sha"
+          tar -xf mvk/ios.tar -C mvk "MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework/MoltenVK"
+          new="mvk/MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework/MoltenVK"
+          test "$(shasum -a 256 "$new" | awk '{print $1}')" = "$bin_sha"
+          old="ipa/Payload/MeloNX.app/Frameworks/libMoltenVK.dylib"
+          test -f "$old"
+          lipo -info "$new"
+          oldid="$(otool -D "$old" | tail -n 1)"
+          nm -gU "$old" | awk '{print $3}' | sort -u > mvk-old.syms
+          nm -gU "$new" | awk '{print $3}' | sort -u > mvk-new.syms
+          missing="$(comm -23 mvk-old.syms mvk-new.syms || true)"
+          if [ -n "$missing" ]; then
+            echo "The new MoltenVK is missing exports the old one had:" >&2
+            echo "$missing" | head -30 >&2
+            exit 1
+          fi
+          cp "$new" "$old"
+          install_name_tool -id "$oldid" "$old"
+          ls -la "$old"
+          echo "MVK_SUFFIX=-mvk${MVK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Strip old signatures and fake-sign for TrollStore
+        run: |
+          set -euo pipefail
+          brew install ldid
+
+          app="ipa/Payload/MeloNX.app"
+
+          find ipa -name '_CodeSignature' -type d -prune -exec rm -rf {} +
+          find ipa -name 'embedded.mobileprovision' -type f -delete
+
+          cat > main.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.developer.kernel.increased-memory-limit</key>
+              <true/>
+              <key>com.apple.developer.kernel.extended-virtual-addressing</key>
+              <true/>
+              <key>get-task-allow</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+          cat > appex.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>get-task-allow</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+          # Nested libraries and frameworks first, with no entitlements of their own.
+          find "$app/Frameworks" -type f | while read -r f; do
+            if file "$f" | grep -q 'Mach-O'; then
+              ldid -S "$f"
+            fi
+          done
+
+          ldid -Sappex.xml "$app/PlugIns/MeloNXRamDonor.appex/MeloNXRamDonor"
+          ldid -Smain.xml "$app/MeloNX"
+
+          echo "--- main entitlements"
+          ldid -e "$app/MeloNX"
+          echo "--- extension entitlements"
+          ldid -e "$app/PlugIns/MeloNXRamDonor.appex/MeloNXRamDonor"
+
+      - name: Package the IPA
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          (cd ipa && zip -qry ../out/MeloNX-2.7-memory-trim-trollstore.ipa .)
+          unzip -l out/MeloNX-2.7-memory-trim-trollstore.ipa | grep -E 'Ryujinx.Library.dylib|MeloNX.app/MeloNX$|RamDonor$'
+          du -sh out/MeloNX-2.7-memory-trim-trollstore.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeloNX-2.7-memory-trim-trollstore-ipa${{ env.MVK_SUFFIX }}
+          path: out/MeloNX-2.7-memory-trim-trollstore.ipa
+          if-no-files-found: error
