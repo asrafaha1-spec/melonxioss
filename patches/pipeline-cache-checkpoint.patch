@@ -1,0 +1,109 @@
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineCacheManager.cs b/src/Ryujinx.Graphics.Vulkan/PipelineCacheManager.cs
+--- a/src/Ryujinx.Graphics.Vulkan/PipelineCacheManager.cs	2026-10-30 20:20:26.931381377 +0000
++++ b/src/Ryujinx.Graphics.Vulkan/PipelineCacheManager.cs	2026-10-30 20:20:38.803076689 +0000
+@@ -268,7 +268,44 @@
+                 Logger.Warning?.PrintMsg(
+                     LogClass.Gpu,
+                     $"The Vulkan main pipeline cache has passed its {FormatSize(_mainState.Budget)} budget " +
+-                    $"(estimated {FormatSize(_mainState.EstimatedBytes)}); it will not be persisted until it fits.");
++                    $"(estimated at {FormatSize(_mainState.EstimatedBytes)} from a per-pipeline placeholder; the real size is " +
++                    $"measured when the cache is saved, and it is only skipped then if it really is over budget).");
++            }
++        }
++
++        /// <summary>
++        /// Saves the main pipeline cache to disk without disposing anything, so the work done by this session
++        /// survives the app being killed while in the background (iOS gives no reliable shutdown hook).
++        /// <para/>
++        /// The main cache is otherwise only written by <see cref="MergeAndSave"/> when the renderer is disposed.
++        /// This holds the pipeline creation lock for the duration of the write, so it must only be called when a
++        /// stall does not matter, such as when emulation has just been paused. Worker caches are not touched: they
++        /// are used by their own threads and already checkpoint themselves from there.
++        /// </summary>
++        public void Checkpoint()
++        {
++            if (_disposed)
++            {
++                return;
++            }
++
++            try
++            {
++                lock (_mainCacheLock)
++                {
++                    if (_disposed || _mainState.PipelineCount == _mainState.SavedPipelineCount)
++                    {
++                        // Nothing was created since the last save.
++                        return;
++                    }
++
++                    Maintain(_mainState, force: true, allowRecycle: false);
++                }
++            }
++            catch (Exception exception)
++            {
++                // Called from the native pause path, where an exception would take the whole app down.
++                Logger.Warning?.PrintMsg(LogClass.Gpu, $"Vulkan pipeline cache checkpoint failed: {exception.Message}");
+             }
+         }
+ 
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
+--- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-30 20:20:26.931410131 +0000
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-30 20:20:38.804247400 +0000
+@@ -55,6 +55,19 @@
+         internal Lock QueueLock { get; private set; }
+         internal Lock PipelineCreationLock { get; private set; }
+ 
++        private static VulkanRenderer _activeRenderer;
++
++        /// <summary>
++        /// Writes the current pipeline cache to disk, if a renderer is running. Safe to call from any thread and
++        /// never throws. Intended for when emulation is paused or the app moves to the background.
++        /// </summary>
++        public static void CheckpointPipelineCache()
++        {
++            VulkanRenderer renderer = Volatile.Read(ref _activeRenderer);
++
++            renderer?.PipelineCacheManager?.Checkpoint();
++        }
++
+         internal MemoryAllocator MemoryAllocator { get; private set; }
+         internal HostMemoryAllocator HostMemoryAllocator { get; private set; }
+         internal DonatedBufferAllocator DonatedBufferAllocator { get; private set; }
+@@ -565,6 +578,7 @@
+                 BackgroundCompilationScheduler.PipelineCacheCount,
+                 PipelineCreationLock);
+             BackgroundCompilationScheduler = new(PipelineCacheManager);
++            Volatile.Write(ref _activeRenderer, this);
+ 
+             LoadFeatures(maxQueueCount, queueFamilyIndex);
+ 
+@@ -1136,6 +1150,11 @@
+ 
+             Api.DeviceWaitIdle(_device);
+ 
++            if (ReferenceEquals(Volatile.Read(ref _activeRenderer), this))
++            {
++                Volatile.Write(ref _activeRenderer, null);
++            }
++
+             PipelineCacheManager.MergeAndSave();
+ 
+             CommandBufferPool.Dispose();
+diff -ruN a/src/Ryujinx.Library/Library.cs b/src/Ryujinx.Library/Library.cs
+--- a/src/Ryujinx.Library/Library.cs	2026-10-30 20:20:26.932824789 +0000
++++ b/src/Ryujinx.Library/Library.cs	2026-10-30 20:20:38.804443201 +0000
+@@ -203,6 +203,13 @@
+             if (_emulationContext != null && _emulationContext.System != null)
+             {
+                 _emulationContext.System.TogglePauseEmulation(shouldPause);
++
++                if (shouldPause)
++                {
++                    // The app may be about to be backgrounded and then killed, which skips the normal shutdown
++                    // save of the pipeline cache. Do it off the caller's thread; it never throws.
++                    ThreadPool.QueueUserWorkItem(static _ => VulkanRenderer.CheckpointPipelineCache());
++                }
+             }
+         }
+ 
