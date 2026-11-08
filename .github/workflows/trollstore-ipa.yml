@@ -89,6 +89,25 @@ jobs:
           # only continues if both files are byte-identical.
           mkdir -p local-nuget
           if ! ls local-nuget/Ryujinx.LibHac.*.nupkg >/dev/null 2>&1; then
+            # Original feed; the file is accepted only if it matches the SHA-256 published in other projects' lock files.
+            want=bf0a630ac3196b2500cdac9dcdc3bd92d133348604983a506e1b301b1f0eee7a
+            for url in \
+              "https://git.ryujinx.app/api/packages/projects/nuget/package/ryujinx.libhac/0.21.0-alpha.129/ryujinx.libhac.0.21.0-alpha.129.nupkg" \
+              "https://api.nuget.org/v3-flatcontainer/ryujinx.libhac/0.21.0-alpha.129/ryujinx.libhac.0.21.0-alpha.129.nupkg"; do
+              if curl -fsSL --retry 2 -m 120 -o /tmp/libhac.nupkg "$url"; then
+                got="$(shasum -a 256 /tmp/libhac.nupkg | cut -d' ' -f1)"
+                if [ "$got" = "$want" ]; then
+                  cp /tmp/libhac.nupkg local-nuget/Ryujinx.LibHac.0.21.0-alpha.129.nupkg
+                  echo "::notice::Ryujinx.LibHac from $url sha256=$got"
+                  break
+                fi
+                echo "::warning::$url returned sha256=$got, expected $want; ignored"
+              else
+                echo "::warning::could not download $url"
+              fi
+            done
+          fi
+          if ! ls local-nuget/Ryujinx.LibHac.*.nupkg >/dev/null 2>&1; then
             # Fall back to the copy a previous successful build left in the restored NuGet cache.
             cached="$(find "$HOME/.nuget/packages" -ipath '*ryujinx.libhac*' -iname '*.nupkg' -type f 2>/dev/null | head -n 1 || true)"
             if [ -n "$cached" ]; then
