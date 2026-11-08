@@ -1413,6 +1413,18 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/ImageArray.cs b/src/Ryujinx.Graphics.Vul
              HashSet<TextureStorage> storages = _storages;
  
              if (storages == null)
+diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineCacheManager.cs b/src/Ryujinx.Graphics.Vulkan/PipelineCacheManager.cs
+--- a/src/Ryujinx.Graphics.Vulkan/PipelineCacheManager.cs	2026-10-16 23:33:24.508844611 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/PipelineCacheManager.cs	2026-11-08 07:35:26.815243990 -0500
+@@ -12,7 +12,7 @@
+     {
+         private const int SaveInterval = 64;
+         private const long MinimumSaveIntervalMs = 15_000;
+-        private const long TotalCacheBudget = 256L * 1024 * 1024;
++        private const long TotalCacheBudget = 512L * 1024 * 1024;
+         private const long MainCacheBudget = TotalCacheBudget / 2;
+         private const long MinimumCacheBudget = 16L * 1024 * 1024;
+         private const long InitialBytesPerPipeline = 128 * 1024;
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs
 --- a/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-16 23:33:24.509953232 -0500
 +++ b/src/Ryujinx.Graphics.Vulkan/PipelineState.cs	2026-10-25 14:33:09.018587105 -0500
@@ -1647,12 +1659,12 @@ diff -ruN a/src/Ryujinx.Graphics.Vulkan/TextureView.cs b/src/Ryujinx.Graphics.Vu
          {
 diff -ruN a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
 --- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-16 23:33:24.520550853 -0500
-+++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-10-25 14:33:09.026928121 -0500
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs	2026-11-08 07:35:26.821775780 -0500
 @@ -1004,6 +1004,7 @@
              Logger.Notice.Print(LogClass.Gpu, gpuInfoMessage);
  
              Logger.Notice.Print(LogClass.Gpu, $"GPU Memory: {GetTotalGPUMemory() / (1024 * 1024)} MiB");
-+            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim RELEASE-4 (perf line in telemetry)");
++            Logger.Notice.Print(LogClass.Gpu, "[Build] memory-trim RELEASE-5 (bigger pipeline cache, lighter GC)");
          }
  
          public void Initialize(GraphicsDebugLevel logLevel)
@@ -1777,6 +1789,18 @@ diff -ruN a/src/Ryujinx.Library/Library.cs b/src/Ryujinx.Library/Library.cs
              Logger.SetEnable(LogLevel.Info, !option.LoggingDisableInfo);
              Logger.SetEnable(LogLevel.Warning, !option.LoggingDisableWarning);
              Logger.SetEnable(LogLevel.Error, option.LoggingEnableError);
+diff -ruN a/src/Ryujinx.Library/Ryujinx.Library.csproj b/src/Ryujinx.Library/Ryujinx.Library.csproj
+--- a/src/Ryujinx.Library/Ryujinx.Library.csproj	2026-10-16 23:33:24.741323927 -0500
++++ b/src/Ryujinx.Library/Ryujinx.Library.csproj	2026-11-08 07:35:26.818019403 -0500
+@@ -19,7 +19,7 @@
+   </PropertyGroup>
+ 
+   <ItemGroup>
+-    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="9" />
++    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="4" />
+   </ItemGroup>
+ 
+   <ItemGroup>
 diff -ruN a/src/Ryujinx.Memory/HostMemoryBudget.cs b/src/Ryujinx.Memory/HostMemoryBudget.cs
 --- a/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-16 23:33:24.742872663 -0500
 +++ b/src/Ryujinx.Memory/HostMemoryBudget.cs	2026-10-17 11:34:25.050894757 -0500
