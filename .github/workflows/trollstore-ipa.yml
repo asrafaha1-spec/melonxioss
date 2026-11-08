@@ -89,6 +89,15 @@ jobs:
           # only continues if both files are byte-identical.
           mkdir -p local-nuget
           if ! ls local-nuget/Ryujinx.LibHac.*.nupkg >/dev/null 2>&1; then
+            # Fall back to the copy a previous successful build left in the restored NuGet cache.
+            cached="$(find "$HOME/.nuget/packages" -ipath '*ryujinx.libhac*' -iname '*.nupkg' -type f 2>/dev/null | head -n 1 || true)"
+            if [ -n "$cached" ]; then
+              lowerv="$(basename "$cached" | tr 'A-Z' 'a-z')"
+              echo "::notice::Using Ryujinx.LibHac from the NuGet cache: $cached sha256=$(sha256sum "$cached" | cut -d' ' -f1)"
+              cp "$cached" "local-nuget/Ryujinx.LibHac.${lowerv#ryujinx.libhac.}"
+            fi
+          fi
+          if ! ls local-nuget/Ryujinx.LibHac.*.nupkg >/dev/null 2>&1; then
             rm -rf mirror
             n=0
             for repo in GRID0-net/GRID0-ryujinx NextendoNetwork/Ryujinx-Nextendo; do
